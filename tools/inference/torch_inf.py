@@ -1,17 +1,20 @@
 """
+DEIMv2: Real-Time Object Detection Meets DINOv3
+Copyright (c) 2025 The DEIMv2 Authors. All Rights Reserved.
+---------------------------------------------------------------------------------
+Modified from D-FINE (https://github.com/Peterande/D-FINE)
 Copyright (c) 2024 The D-FINE Authors. All Rights Reserved.
 """
 
+import os
+import sys
+
+import cv2  # Added for video processing
+import numpy as np
 import torch
 import torch.nn as nn
 import torchvision.transforms as T
-
-import numpy as np
 from PIL import Image, ImageDraw
-
-import sys
-import os
-import cv2  # Added for video processing
 
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '../../')))
 from engine.core import YAMLConfig
@@ -33,13 +36,13 @@ def draw(images, labels, boxes, scores, thrh=0.4):
         im.save('torch_results.jpg')
 
 
-def process_image(model, device, file_path):
+def process_image(model, device, file_path, size=(640, 640)):
     im_pil = Image.open(file_path).convert('RGB')
     w, h = im_pil.size
     orig_size = torch.tensor([[w, h]]).to(device)
 
     transforms = T.Compose([
-        T.Resize((640, 640)),
+        T.Resize(size),
         T.ToTensor(),
     ])
     im_data = transforms(im_pil).unsqueeze(0).to(device)
@@ -50,7 +53,7 @@ def process_image(model, device, file_path):
     draw([im_pil], labels, boxes, scores)
 
 
-def process_video(model, device, file_path):
+def process_video(model, device, file_path, size=(640, 640)):
     cap = cv2.VideoCapture(file_path)
 
     # Get video properties
@@ -63,7 +66,7 @@ def process_video(model, device, file_path):
     out = cv2.VideoWriter('torch_results.mp4', fourcc, fps, (orig_w, orig_h))
 
     transforms = T.Compose([
-        T.Resize((640, 640)),
+        T.Resize(size),
         T.ToTensor(),
     ])
 
@@ -135,16 +138,17 @@ def main(args):
 
     device = args.device
     model = Model().to(device)
+    img_size = cfg.yaml_cfg["eval_spatial_size"]
 
     # Check if the input file is an image or a video
     file_path = args.input
     if os.path.splitext(file_path)[-1].lower() in ['.jpg', '.jpeg', '.png', '.bmp']:
         # Process as image
-        process_image(model, device, file_path)
+        process_image(model, device, file_path, img_size)
         print("Image processing complete.")
     else:
         # Process as video
-        process_video(model, device, file_path)
+        process_video(model, device, file_path, img_size)
 
 
 if __name__ == '__main__':

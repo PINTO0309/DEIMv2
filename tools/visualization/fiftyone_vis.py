@@ -2,25 +2,26 @@
 Copyright (c) 2024 The D-FINE Authors. All Rights Reserved.
 """
 
+import argparse
 import os
 import subprocess
-
-import argparse
-
-import torch
-import fiftyone.core.models as fom
-import fiftyone as fo
-import fiftyone.zoo as foz
-import torchvision.transforms as transforms
-from PIL import Image
-import fiftyone.core.labels as fol
-import fiftyone.core.fields as fof
-from fiftyone import ViewField as F
-import time
-import tqdm
 import sys
+import time
+
+import fiftyone as fo
+import fiftyone.core.fields as fof
+import fiftyone.core.labels as fol
+import fiftyone.core.models as fom
+import fiftyone.zoo as foz
+import torch
+import torchvision.transforms as transforms
+import tqdm
+from fiftyone import ViewField as F
+from PIL import Image
+
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), '../..'))
 from engine.core import YAMLConfig
+
 
 def kill_existing_mongod():
     try:

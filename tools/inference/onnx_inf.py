@@ -1,13 +1,17 @@
 """
+DEIMv2: Real-Time Object Detection Meets DINOv3
+Copyright (c) 2025 The DEIMv2 Authors. All Rights Reserved.
+---------------------------------------------------------------------------------
+Modified from D-FINE (https://github.com/Peterande/D-FINE)
 Copyright (c) 2024 The D-FINE Authors. All Rights Reserved.
 """
 
-import torch
-import torchvision.transforms as T
+import cv2
 import numpy as np
 import onnxruntime as ort
+import torch
+import torchvision.transforms as T
 from PIL import Image, ImageDraw
-import cv2
 
 
 def resize_with_aspect_ratio(image, size, interpolation=Image.BILINEAR):
@@ -51,9 +55,9 @@ def draw(images, labels, boxes, scores, ratios, paddings, thrh=0.4):
     return result_images
 
 
-def process_image(sess, im_pil):
+def process_image(sess, im_pil, size=640):
     # Resize image while preserving aspect ratio
-    resized_im_pil, ratio, pad_w, pad_h = resize_with_aspect_ratio(im_pil, 640)
+    resized_im_pil, ratio, pad_w, pad_h = resize_with_aspect_ratio(im_pil, size)
     orig_size = torch.tensor([[resized_im_pil.size[1], resized_im_pil.size[0]]])
 
     transforms = T.Compose([
@@ -76,7 +80,7 @@ def process_image(sess, im_pil):
     print("Image processing complete. Result saved as 'result.jpg'.")
 
 
-def process_video(sess, video_path):
+def process_video(sess, video_path, size=640):
     cap = cv2.VideoCapture(video_path)
 
     # Get video properties
@@ -99,7 +103,7 @@ def process_video(sess, video_path):
         frame_pil = Image.fromarray(cv2.cvtColor(frame, cv2.COLOR_BGR2RGB))
 
         # Resize frame while preserving aspect ratio
-        resized_frame_pil, ratio, pad_w, pad_h = resize_with_aspect_ratio(frame_pil, 640)
+        resized_frame_pil, ratio, pad_w, pad_h = resize_with_aspect_ratio(frame_pil, size)
         orig_size = torch.tensor([[resized_frame_pil.size[1], resized_frame_pil.size[0]]])
 
         transforms = T.Compose([
@@ -140,6 +144,7 @@ def main(args):
     """Main function."""
     # Load the ONNX model
     sess = ort.InferenceSession(args.onnx)
+    size = sess.get_inputs()[0].shape[2]
     print(f"Using device: {ort.get_device()}")
 
     input_path = args.input
@@ -147,10 +152,10 @@ def main(args):
     try:
         # Try to open the input as an image
         im_pil = Image.open(input_path).convert('RGB')
-        process_image(sess, im_pil)
+        process_image(sess, im_pil, size)
     except IOError:
         # Not an image, process as video
-        process_video(sess, input_path)
+        process_video(sess, input_path, size)
 
 
 if __name__ == '__main__':

@@ -1,23 +1,25 @@
 """
+DEIMv2: Real-Time Object Detection Meets DINOv3
+Copyright (c) 2025 The DEIMv2 Authors. All Rights Reserved.
+---------------------------------------------------------------------------------
+Modified from D-FINE (https://github.com/Peterande/D-FINE)
 Copyright (c) 2024 The D-FINE Authors. All Rights Reserved.
 """
 
+import os
+import random
+import sys
+
+import cv2  # Added for video processing
+import matplotlib.pyplot as plt
+import numpy as np
 import torch
 import torch.nn as nn
 import torchvision.transforms as T
-
-import numpy as np
 from PIL import Image, ImageDraw, ImageFont
-
-import sys
-import os
-import cv2  # Added for video processing
-import random
-import matplotlib.pyplot as plt
 
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '../../')))
 from engine.core import YAMLConfig
-
 
 label_map = {
     1: 'person', 2: 'bicycle', 3: 'car', 4: 'motorbike', 5: 'aeroplane',
@@ -59,7 +61,7 @@ def draw(image, labels, boxes, scores, thrh=0.5):
 
         # 画边框
         draw.rectangle(box, outline=color, width=3)
-        
+
         # 添加标签和置信度
         text = f"{label_map[category]} {scores[j].item():.2f}"
         text_bbox = draw.textbbox((0, 0), text, font=font)  # 获取文本边界框
@@ -73,13 +75,13 @@ def draw(image, labels, boxes, scores, thrh=0.5):
     return image
 
 
-def process_image(model, file_path):
+def process_image(model, file_path, size=(640, 640)):
     im_pil = Image.open(file_path).convert('RGB')
     w, h = im_pil.size
     orig_size = torch.tensor([[w, h]]).cuda()
 
     transforms = T.Compose([
-        T.Resize((640, 640)),
+        T.Resize((size)),
         T.ToTensor(),
     ])
     im_data = transforms(im_pil).unsqueeze(0).cuda()
@@ -89,7 +91,7 @@ def process_image(model, file_path):
     draw([im_pil], output)
 
 
-def process_video(model, file_path):
+def process_video(model, file_path, size=(640, 640)):
     cap = cv2.VideoCapture(file_path)
 
     # Get video properties
@@ -102,7 +104,7 @@ def process_video(model, file_path):
     out = cv2.VideoWriter('torch_results.mp4', fourcc, fps, (orig_w, orig_h))
 
     transforms = T.Compose([
-        T.Resize((640, 640)),
+        T.Resize(size),
         T.ToTensor(),
     ])
 
@@ -141,15 +143,15 @@ def process_video(model, file_path):
     out.release()
     print("Video processing complete. Result saved as 'results_video.mp4'.")
 
-def process_dataset(model, dataset_path, output_path, thrh=0.5):
+def process_dataset(model, dataset_path, output_path, thrh=0.5, size=(640, 640)):
     os.makedirs(output_path, exist_ok=True)
     image_paths = [os.path.join(dataset_path, f) for f in os.listdir(dataset_path) if f.endswith(('.jpg', '.png'))]
-    
+
     transforms = T.Compose([
-        T.Resize((640, 640)),
+        T.Resize(size),
         T.ToTensor(),
     ])
-    
+
     print(f"Found {len(image_paths)} images in validation set...")
     for idx, file_path in enumerate(image_paths):
         im_pil = Image.open(file_path).convert('RGB')
@@ -160,7 +162,7 @@ def process_dataset(model, dataset_path, output_path, thrh=0.5):
         im_data = transforms(im_pil).unsqueeze(0).cuda()
         output = model(im_data, orig_size)
         labels, boxes, scores = output[0]['labels'], output[0]['boxes'], output[0]['scores']
-        
+
         # 绘制结果
         vis_image = draw(im_pil.copy(), labels, boxes, scores, thrh)
         save_path = os.path.join(output_path, f"vis_{os.path.basename(file_path)}")
@@ -203,7 +205,8 @@ def main(args):
             return outputs
 
     model = Model()
-    process_dataset(model, args.dataset, args.output, thrh=0.5)
+    img_size = cfg.yaml_cfg["eval_spatial_size"]
+    process_dataset(model, args.dataset, args.output, thrh=0.5, size=img_size)
     # file_path = args.input
     # if os.path.splitext(file_path)[-1].lower() in ['.jpg', '.jpeg', '.png', '.bmp']:
     #     process_image(model, file_path)
