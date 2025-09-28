@@ -78,6 +78,7 @@
 * [4. 🧰 Tools](#4-tools)
 * [5. 📜 Citation](#5-citation)
 * [6. 🙏 Acknowledgement](#6-acknowledgement)
+* [7. ⭐ Star History](#7-star-history)
   
   
 ## 1. Model Zoo
@@ -460,3 +461,7 @@ If you use `DEIMv2` or its methods in your work, please cite the following BibTe
 Our work is built upon [D-FINE](https://github.com/Peterande/D-FINE), [RT-DETR](https://github.com/lyuwenyu/RT-DETR) and [DINOv3](https://github.com/facebookresearch/dinov3). Thanks for their great work!
 
 ✨ Feel free to contribute and reach out if you have any questions! ✨
+
+## 7. Star History
+
+[![Star History Chart](https://api.star-history.com/svg?repos=Intellindust-AI-Lab/DEIMv2&type=Date)](https://www.star-history.com/#Intellindust-AI-Lab/DEIMv2&Date)
