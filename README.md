@@ -84,15 +84,15 @@
 ## 1. Model Zoo
 
 | Model | Dataset | AP | #Params | GFLOPs | Latency (ms) | config | checkpoint | log |
-| :---: | :---: | :---: | :---: | :---: | :---: | :---: | :---: | :---: |
-| **Atto** | COCO | **23.8** | 0.5M | 0.8 | 1.61 | [yml](./configs/deimv2/deimv2_hgnetv2_atto_coco.yml) | [ckpt](https://drive.google.com/file/d/18sRJXX3FBUigmGJ1y5Oo_DPC5C3JCgYc/view?usp=sharing) | [log](https://drive.google.com/file/d/1M7FLN8EeVHG02kegPN-Wxf_9BlkghZfj/view?usp=sharing) |
-| **Femto** | COCO | **31.0** | 1.0M | 1.7 | 1.91 | [yml](./configs/deimv2/deimv2_hgnetv2_femto_coco.yml) | [ckpt](https://drive.google.com/file/d/16hh6l9Oln9TJng4V0_HNf_Z7uYb7feds/view?usp=sharing) | [log](https://drive.google.com/file/d/1_KWVfOr3bB5TMHTNOmDIAO-tZJmKB9-b/view?usp=sharing) |
-| **Pico** | COCO | **38.5** | 1.5M | 5.2 | 2.14 | [yml](./configs/deimv2/deimv2_hgnetv2_pico_coco.yml) | [ckpt](https://drive.google.com/file/d/1PXpUxYSnQO-zJHtzrCPqQZ3KKatZwzFT/view?usp=sharing) | [log](https://drive.google.com/file/d/1GwyWotYSKmFQdVN9k2MM6atogpbh0lo1/view?usp=sharing) |
-| **N** | COCO | **43.0** | 3.6M | 6.8 | 2.32 | [yml](./configs/deimv2/deimv2_hgnetv2_n_coco.yml) | [ckpt](https://drive.google.com/file/d/1G_Q80EVO4T7LZVPfHwZ3sT65FX5egp9K/view?usp=sharing) | [log](https://drive.google.com/file/d/1QhYfRrUy8HrihD3OwOMJLC-ATr97GInV/view?usp=sharing) |
-| **S** | COCO | **50.9** | 9.7M | 25.6 | 5.78 | [yml](./configs/deimv2/deimv2_dinov3_s_coco.yml) | [ckpt](https://drive.google.com/file/d/1MDOh8UXD39DNSew6rDzGFp1tAVpSGJdL/view?usp=sharing) | [log](https://drive.google.com/file/d/1ydA4lWiTYusV1s3WHq5jSxIq39oxy-Nf/view?usp=sharing) |
-| **M** | COCO | **53.0** | 18.1M | 52.2 | 8.80 | [yml](./configs/deimv2/deimv2_dinov3_m_coco.yml) | [ckpt](https://drive.google.com/file/d/1nPKDHrotusQ748O1cQXJfi5wdShq6bKp/view?usp=sharing) | [log](https://drive.google.com/file/d/1i05Q1-O9UH-2Vb52FpFJ4mBG523GUqJU/view?usp=sharing) |
-| **L** | COCO | **56.0** | 32.2M | 96.7 | 10.47 | [yml](./configs/deimv2/deimv2_dinov3_l_coco.yml) | [ckpt](https://drive.google.com/file/d/1dRJfVHr9HtpdvaHlnQP460yPVHynMray/view?usp=sharing) | [log](https://drive.google.com/file/d/13mrQxyrf1kJ45Yd692UQwdb7lpGoqsiS/view?usp=sharing) |
-| **X** | COCO | **57.8** | 50.3M | 151.6 | 13.75 | [yml](./configs/deimv2/deimv2_dinov3_x_coco.yml) | [ckpt](https://drive.google.com/file/d/1pTiQaBGt8hwtO0mbYlJ8nE-HGztGafS7/view?usp=sharing) | [log](https://drive.google.com/file/d/13QV0SwJw1wHl0xHWflZj1KstBUAovSsV/view?usp=drive_link) |
+| :---: | :---: | :---: | :---: | :---: |:------------:| :---: | :---: | :---: |
+| **Atto** | COCO | **23.8** | 0.5M | 0.8 |     1.10     | [yml](./configs/deimv2/deimv2_hgnetv2_atto_coco.yml) | [ckpt](https://drive.google.com/file/d/18sRJXX3FBUigmGJ1y5Oo_DPC5C3JCgYc/view?usp=sharing) | [log](https://drive.google.com/file/d/1M7FLN8EeVHG02kegPN-Wxf_9BlkghZfj/view?usp=sharing) |
+| **Femto** | COCO | **31.0** | 1.0M | 1.7 |     1.45     | [yml](./configs/deimv2/deimv2_hgnetv2_femto_coco.yml) | [ckpt](https://drive.google.com/file/d/16hh6l9Oln9TJng4V0_HNf_Z7uYb7feds/view?usp=sharing) | [log](https://drive.google.com/file/d/1_KWVfOr3bB5TMHTNOmDIAO-tZJmKB9-b/view?usp=sharing) |
+| **Pico** | COCO | **38.5** | 1.5M | 5.2 |     2.13     | [yml](./configs/deimv2/deimv2_hgnetv2_pico_coco.yml) | [ckpt](https://drive.google.com/file/d/1PXpUxYSnQO-zJHtzrCPqQZ3KKatZwzFT/view?usp=sharing) | [log](https://drive.google.com/file/d/1GwyWotYSKmFQdVN9k2MM6atogpbh0lo1/view?usp=sharing) |
+| **N** | COCO | **43.0** | 3.6M | 6.8 |     2.32     | [yml](./configs/deimv2/deimv2_hgnetv2_n_coco.yml) | [ckpt](https://drive.google.com/file/d/1G_Q80EVO4T7LZVPfHwZ3sT65FX5egp9K/view?usp=sharing) | [log](https://drive.google.com/file/d/1QhYfRrUy8HrihD3OwOMJLC-ATr97GInV/view?usp=sharing) |
+| **S** | COCO | **50.9** | 9.7M | 25.6 |     5.78     | [yml](./configs/deimv2/deimv2_dinov3_s_coco.yml) | [ckpt](https://drive.google.com/file/d/1MDOh8UXD39DNSew6rDzGFp1tAVpSGJdL/view?usp=sharing) | [log](https://drive.google.com/file/d/1ydA4lWiTYusV1s3WHq5jSxIq39oxy-Nf/view?usp=sharing) |
+| **M** | COCO | **53.0** | 18.1M | 52.2 |     8.80     | [yml](./configs/deimv2/deimv2_dinov3_m_coco.yml) | [ckpt](https://drive.google.com/file/d/1nPKDHrotusQ748O1cQXJfi5wdShq6bKp/view?usp=sharing) | [log](https://drive.google.com/file/d/1i05Q1-O9UH-2Vb52FpFJ4mBG523GUqJU/view?usp=sharing) |
+| **L** | COCO | **56.0** | 32.2M | 96.7 |    10.47     | [yml](./configs/deimv2/deimv2_dinov3_l_coco.yml) | [ckpt](https://drive.google.com/file/d/1dRJfVHr9HtpdvaHlnQP460yPVHynMray/view?usp=sharing) | [log](https://drive.google.com/file/d/13mrQxyrf1kJ45Yd692UQwdb7lpGoqsiS/view?usp=sharing) |
+| **X** | COCO | **57.8** | 50.3M | 151.6 |    13.75     | [yml](./configs/deimv2/deimv2_dinov3_x_coco.yml) | [ckpt](https://drive.google.com/file/d/1pTiQaBGt8hwtO0mbYlJ8nE-HGztGafS7/view?usp=sharing) | [log](https://drive.google.com/file/d/13QV0SwJw1wHl0xHWflZj1KstBUAovSsV/view?usp=drive_link) |
 
 
 
@@ -283,38 +283,53 @@ CUDA_VISIBLE_DEVICES=0,1,2,3 torchrun --master_port=7777 --nproc_per_node=4 trai
 <details>
 <summary> Customizing Batch Size </summary>
 
-For example, if you want to double the total batch size when training D-FINE-L on COCO2017, here are the steps you should follow:
+For example, if you want to use **DEIMv2-S** and  double the total batch size to 64 when training **DEIMv2** on COCO2017, here are the steps you should follow:
 
-1. **Modify your [dataloader.yml](./configs/base/dataloader.yml)** to increase the `total_batch_size`:
+1. **Modify your [deimv2_dinov3_s_coco.yml](./configs/deimv2/deimv2_dinov3_s_coco.yml)** to increase the `total_batch_size`:
 
     ```yaml
     train_dataloader:
-        total_batch_size: 64  # Previously it was 32, now doubled
+      total_batch_size: 64 
+      dataset: 
+        transforms:
+          ops:
+            ...
+    
+      collate_fn:
+        ...
     ```
 
-2. **Modify your [deim_hgnetv2_l_coco.yml](./configs/deim_dfine/deim_hgnetv2_l_coco.yml)**. Here’s how the key parameters should be adjusted:
+2. **Modify your [deimv2_dinov3_s_coco.yml](./configs/deimv2/deimv2_dinov3_s_coco.yml)**. Here’s how the key parameters should be adjusted:
 
     ```yaml
     optimizer:
-    type: AdamW
-    params:
+      type: AdamW
+    
+      params: 
         -
-        params: '^(?=.*backbone)(?!.*norm|bn).*$'
-        lr: 0.000025  # doubled, linear scaling law
+          # except norm/bn/bias in self.dinov3
+          params: '^(?=.*.dinov3)(?!.*(?:norm|bn|bias)).*$'  
+          lr: 0.00005  # doubled, linear scaling law
         -
-        params: '^(?=.*(?:encoder|decoder))(?=.*(?:norm|bn)).*$'
-        weight_decay: 0.
-
-    lr: 0.0005  # doubled, linear scaling law
-    betas: [0.9, 0.999]
-    weight_decay: 0.0001  # need a grid search
-
+          # including all norm/bn/bias in self.dinov3
+          params: '^(?=.*.dinov3)(?=.*(?:norm|bn|bias)).*$'    
+          lr: 0.00005   # doubled, linear scaling law
+          weight_decay: 0.
+        - 
+          # including all norm/bn/bias except for the self.dinov3
+          params: '^(?=.*(?:sta|encoder|decoder))(?=.*(?:norm|bn|bias)).*$'
+          weight_decay: 0.
+    
+      lr: 0.0005   # linear scaling law if needed
+      betas: [0.9, 0.999]
+      weight_decay: 0.0001
+   
     ema:  # added EMA settings
-        decay: 0.9998  # adjusted by 1 - (1 - decay) * 2
-        warmups: 500  # halved
-
+      decay: 0.9998  # adjusted by 1 - (1 - decay) * 2
+      warmups: 500  # halved
+   
     lr_warmup_scheduler:
-        warmup_duration: 250  # halved
+      warmup_duration: 250  # halved
     ```
 
 </details>
@@ -323,30 +338,70 @@ For example, if you want to double the total batch size when training D-FINE-L o
 <details>
 <summary> Customizing Input Size </summary>
 
-If you'd like to train **DEIM** on COCO2017 with an input size of 320x320, follow these steps:
+If you'd like to train **DEIMv2-S** on COCO2017 with an input size of 320x320, follow these steps:
 
-1. **Modify your [dataloader.yml](./configs/base/dataloader.yml)**:
-
-    ```yaml
-
-    train_dataloader:
-    dataset:
-        transforms:
-            ops:
-                - {type: Resize, size: [320, 320], }
-    collate_fn:
-        base_size: 320
-    dataset:
-        transforms:
-            ops:
-                - {type: Resize, size: [320, 320], }
-    ```
-
-2. **Modify your [dfine_hgnetv2.yml](./configs/base/dfine_hgnetv2.yml)**:
+1. **Modify your  [deimv2_dinov3_s_coco.yml](./configs/deimv2/deimv2_dinov3_s_coco.yml)**:
 
     ```yaml
     eval_spatial_size: [320, 320]
+   
+    train_dataloader:
+      # Here we set the total_batch_size to 64 as an example.
+      total_batch_size: 64 
+      dataset: 
+        transforms:
+          ops:
+            #  Especially for Mosaic augmentation, it is recommended that output_size = input_size / 2.
+            - {type: Mosaic, output_size: 160, rotation_range: 10, translation_range: [0.1, 0.1], scaling_range: [0.5, 1.5],
+               probability: 1.0, fill_value: 0, use_cache: True, max_cached_images: 50, random_pop: True}
+            ...
+            - {type: Resize, size: [320, 320], }
+            ...
+        collate_fn:
+          base_size: 320
+          ...
+
+    val_dataloader:
+      dataset:
+        transforms:
+          ops:
+            - {type: Resize, size: [320, 320], }
+            ...
     ```
+   
+</details>
+
+<details>
+<summary> Customizing Epoch </summary>
+
+If you want to finetune **DEIMv2-S** for **20** epochs, follow these steps (for reference only; feel free to adjust them according to your needs):
+
+```yml
+epoches: 32 #  Total epochs: 20 for training + EMA  for 4n = 12. n refers to the model size in the matched config.
+
+flat_epoch: 14    # 4 + 20 // 2
+no_aug_epoch: 12  # 4n
+
+train_dataloader:
+  dataset: 
+    transforms:
+      ops:
+        ...
+      policy:
+        epoch: [4, 14, 20]   # [start_epoch, flat_epoch, epoches - no_aug_epoch]
+
+  collate_fn:
+    ...
+    mixup_epochs: [4, 14]  # [start_epoch, flat_epoch]
+    stop_epoch: 20  # epoches - no_aug_epoch
+    copyblend_epochs: [4, 20]  # [start_epoch, epoches - no_aug_epoch]
+  
+DEIMCriterion:
+  matcher:
+    ...
+    matcher_change_epoch: 18  # ~90% of (epoches - no_aug_epoch)
+
+```
 
 </details>
 
