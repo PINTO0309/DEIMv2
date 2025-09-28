@@ -1,5 +1,17 @@
 # This fork `uv` branch only has some parameters customized for learning WholebodyXX. Also, ONNX/TensorRT optimization.
 
+```bash
+# conda unnecessary
+# All required package versions are fixed, so if you are using amd or x86_64, the following will work immediately.
+git clone https://github.com/PINTO0309/DEIMv2.git
+cd DEIMv2
+
+curl -LsSf https://astral.sh/uv/install.sh | sh
+uv sync
+source .venv/bin/activate
+export PYTHONWARNINGS="ignore"
+```
+
 ---
 
 <h2 align="center">
