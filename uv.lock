@@ -7,6 +7,9 @@ resolution-markers = [
     "(platform_machine != 'aarch64' and sys_platform == 'linux') or (sys_platform != 'darwin' and sys_platform != 'linux')",
 ]
 
+[manifest]
+overrides = [{ name = "sympy", specifier = ">=1.13.1,<1.14" }]
+
 [[package]]
 name = "absl-py"
 version = "2.3.1"
@@ -152,10 +155,15 @@ dependencies = [
     { name = "faster-coco-eval" },
     { name = "mmcv" },
     { name = "onnx" },
+    { name = "onnx-graphsurgeon" },
     { name = "onnxruntime" },
     { name = "onnxsim" },
+    { name = "onnxslim" },
     { name = "pyyaml" },
     { name = "scipy" },
+    { name = "sit4onnx" },
+    { name = "snc4onnx" },
+    { name = "sor4onnx" },
     { name = "tensorboard" },
     { name = "torch" },
     { name = "torchvision" },
@@ -168,10 +176,15 @@ requires-dist = [
     { name = "faster-coco-eval", specifier = "==1.6.7" },
     { name = "mmcv", specifier = "==2.2.0" },
     { name = "onnx", specifier = "==1.19.0" },
+    { name = "onnx-graphsurgeon", specifier = "==0.5.8" },
     { name = "onnxruntime", specifier = "==1.23.0" },
     { name = "onnxsim", specifier = "==0.4.33" },
+    { name = "onnxslim", specifier = "==0.1.69" },
     { name = "pyyaml", specifier = "==6.0.3" },
     { name = "scipy", specifier = "==1.16.2" },
+    { name = "sit4onnx", specifier = "==1.0.10" },
+    { name = "snc4onnx", specifier = "==1.0.13" },
+    { name = "sor4onnx", specifier = "==1.0.7" },
     { name = "tensorboard", specifier = "==2.20.0" },
     { name = "torch", specifier = "==2.5.1" },
     { name = "torchvision", specifier = "==0.20.1" },
@@ -670,6 +683,18 @@ wheels = [
 ]
 
 [[package]]
+name = "onnx-graphsurgeon"
+version = "0.5.8"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "numpy" },
+    { name = "onnx" },
+]
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/71/53/98334c4f64a9e289a8cb48f5e7966b8ff015414d0bf26587cf46d764f1d8/onnx_graphsurgeon-0.5.8-py2.py3-none-any.whl", hash = "sha256:6f611ea29a8e4740fbab1aae52bf4c40b8b9918f8459058d20b99acc79fce121", size = 57923, upload-time = "2025-04-10T18:49:24.483Z" },
+]
+
+[[package]]
 name = "onnxruntime"
 version = "1.23.0"
 source = { registry = "https://pypi.org/simple" }
@@ -702,6 +727,22 @@ wheels = [
     { url = "https://files.pythonhosted.org/packages/89/96/93fbce9287448e8a789f833ea4fde4f1908c90fecfce0acf1b3a45c243ed/onnxsim-0.4.33-cp311-cp311-macosx_10_15_universal2.whl", hash = "sha256:a73b6ceb7532fc5b4f6e43db22f6602ae6fab0edede950ed65a40dc3075b5741", size = 3357945, upload-time = "2023-06-26T10:00:07.017Z" },
     { url = "https://files.pythonhosted.org/packages/ad/69/828ad55d7854b984d2589525d9c135ebc9ad2315ceb746554c61a3665a4b/onnxsim-0.4.33-cp311-cp311-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:2c6fb8e31cb8c114f34cadd322443b5645c5a020cfd61b6abd361ca027f14e03", size = 2175467, upload-time = "2023-06-26T10:00:08.828Z" },
     { url = "https://files.pythonhosted.org/packages/5d/55/1baa7f4849cc3e6a76554732ad44b587e90784e4a4f0ba7d963b788de6ee/onnxsim-0.4.33-cp311-cp311-win_amd64.whl", hash = "sha256:1a54be8284f27e874a87467dacb3d0606abf9c40244ab2628ed9d0eb432f20ed", size = 1241584, upload-time = "2023-06-26T10:00:10.576Z" },
+]
+
+[[package]]
+name = "onnxslim"
+version = "0.1.69"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "colorama" },
+    { name = "ml-dtypes" },
+    { name = "onnx" },
+    { name = "packaging" },
+    { name = "sympy" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/55/1d/2743ffc221c86c568d8cbdba2edfc120a07913e8dfbcbcb1b79f8b94033b/onnxslim-0.1.69.tar.gz", hash = "sha256:e720f533657d5172190c3dd87fd66bfa792f4e0ac2820ebf9cf95b80787d80e8", size = 141456, upload-time = "2025-09-21T07:14:44.499Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/61/55/af7ab2cd2d1298c7318bbf8ee7de3099700c8d263a0168c2c0b2769b37f1/onnxslim-0.1.69-py3-none-any.whl", hash = "sha256:f008eae10952069c0ae55adac9d4804694e25683d5868e41a9e59bf6b78ce7a9", size = 164723, upload-time = "2025-09-21T07:14:43.059Z" },
 ]
 
 [[package]]
@@ -997,12 +1038,39 @@ wheels = [
 ]
 
 [[package]]
+name = "sit4onnx"
+version = "1.0.10"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/b9/89/e49f3ea38335ab8c34503dc9bd91319c654688df4c6402ce8cc4bec9c2fc/sit4onnx-1.0.10.tar.gz", hash = "sha256:075f3545a4f3f200cbdc2b7e993f0eef812a22142a182717ba0c085a9485a9c3", size = 13695, upload-time = "2025-09-07T09:54:08.606Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/ce/db/a0be70c6786b3c2e4f4a0b66976e7a3acfd95ef777977bf60d846871737f/sit4onnx-1.0.10-py3-none-any.whl", hash = "sha256:e6ebb0e9cd79692ee53bfdb973ccd5282bdbbe5a71d3bfcfcf46e56ae4e39a48", size = 11504, upload-time = "2025-09-07T09:54:07.465Z" },
+]
+
+[[package]]
 name = "six"
 version = "1.17.0"
 source = { registry = "https://pypi.org/simple" }
 sdist = { url = "https://files.pythonhosted.org/packages/94/e7/b2c673351809dca68a0e064b6af791aa332cf192da575fd474ed7d6f16a2/six-1.17.0.tar.gz", hash = "sha256:ff70335d468e7eb6ec65b95b99d3a2836546063f63acc5171de367e834932a81", size = 34031, upload-time = "2024-12-04T17:35:28.174Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/b7/ce/149a00dd41f10bc29e5921b496af8b574d8413afcd5e30dfa0ed46c2cc5e/six-1.17.0-py2.py3-none-any.whl", hash = "sha256:4721f391ed90541fddacab5acf947aa0d3dc7d27b2e1e8eda2be8970586c3274", size = 11050, upload-time = "2024-12-04T17:35:26.475Z" },
+]
+
+[[package]]
+name = "snc4onnx"
+version = "1.0.13"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/0e/50/31ebb0dbed548f3fc5970b5a57d3bfceef67b3a8d410a019be259248dac0/snc4onnx-1.0.13.tar.gz", hash = "sha256:ec1b4d2feee4f44131af29b2589dac51c8b521964538a6ddcc5fb9e777c9e602", size = 12082, upload-time = "2024-04-30T05:45:46.375Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/73/57/cf831fe44e0de2e7f7890f5d8c4d6a669fc5da73ce7d4d58b99cd35e9ecb/snc4onnx-1.0.13-py3-none-any.whl", hash = "sha256:924f4ee8d3dc6294612a3a1b4bf610d9425ebf24be5792e8a82fdb19acc1da91", size = 10895, upload-time = "2024-04-30T05:45:44.806Z" },
+]
+
+[[package]]
+name = "sor4onnx"
+version = "1.0.7"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/4d/8a/d930f6215383d530f042022f8cabb96d8e5b32c134a6f32baeafab96efbd/sor4onnx-1.0.7.tar.gz", hash = "sha256:6a3e91e91da0b11aec86bce96a3f28f9f52ab000421b59a2ae689c10fef782be", size = 7801, upload-time = "2024-05-28T23:38:59.193Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/f1/c4/2091efd5236c0a9f755f6de4dfec1985cb2dfd270f92237486c521815778/sor4onnx-1.0.7-py3-none-any.whl", hash = "sha256:aca7a9b71bf0319415141332ccbd0c01fb8f7feb485e66a2342dda2104fd3e95", size = 7290, upload-time = "2024-05-28T23:38:57.646Z" },
 ]
 
 [[package]]

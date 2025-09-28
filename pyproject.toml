@@ -9,13 +9,21 @@ dependencies = [
     "faster-coco-eval==1.6.7",
     "mmcv==2.2.0",
     "onnx==1.19.0",
+    "onnx-graphsurgeon==0.5.8",
     "onnxruntime==1.23.0",
     "onnxsim==0.4.33",
     "onnxslim==0.1.69",
     "pyyaml==6.0.3",
     "scipy==1.16.2",
+    "sit4onnx==1.0.10",
+    "snc4onnx==1.0.13",
+    "sor4onnx==1.0.7",
     "tensorboard==2.20.0",
     "torch==2.5.1",
     "torchvision==0.20.1",
     "transformers==4.56.2",
+]
+[tool.uv]
+override-dependencies = [
+    "sympy>=1.13.1,<1.14",
 ]
