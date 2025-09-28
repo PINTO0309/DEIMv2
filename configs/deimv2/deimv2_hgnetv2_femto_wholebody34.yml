@@ -1,0 +1,146 @@
+__include__: [
+  '../dataset/coco_detection.yml',
+  '../runtime.yml',
+  '../base/dataloader.yml',
+  '../base/optimizer.yml',
+  '../base/deimv2.yml',
+]
+
+output_dir: ./outputs/deimv2_hgnetv2_femto_wholebody34
+
+DEIM:
+  encoder: LiteEncoder
+
+HGNetv2:
+  name: 'Femto'
+  return_idx: [2]
+  freeze_at: -1
+  freeze_norm: False
+  use_lab: True
+
+LiteEncoder:
+  in_channels: [512]
+  feat_strides: [16]
+
+  # intra
+  hidden_dim: 96
+
+  # cross
+  expansion: 0.34
+  depth_mult: 0.5
+  act: 'silu'
+
+
+DEIMTransformer:
+  feat_channels: [96, 96]
+  feat_strides: [16, 32]
+  hidden_dim: 96
+  num_levels: 2
+  num_points: [4, 2]
+
+  num_layers: 3
+  eval_idx: -1
+  num_queries: 340
+
+  # FFN
+  dim_feedforward: 256
+
+  # New options for DEIMv2
+  share_bbox_head: True
+  use_gateway: False
+
+PostProcessor:
+  num_top_queries: 340
+
+# Increase to search for the optimal ema
+epoches: 500 # 468 + 32
+
+## Our LR-Scheduler
+warmup_iter: 4000
+flat_epoch: 250    # 4 + epoch // 2, e.g., 40 = 4 + 72 / 2
+no_aug_epoch: 32
+lr_gamma: 0.5
+
+optimizer:
+  type: AdamW
+  params:
+    -
+      params: '^(?=.*backbone)(?!.*norm|bn).*$'
+      lr: 0.0008
+    -
+      params: '^(?=.*backbone)(?=.*norm|bn).*$'
+      lr: 0.0008
+      weight_decay: 0.
+    -  # not opt
+      params: '^(?=.*(?:encoder|decoder))(?=.*(?:norm|bn|bias)).*$'
+      weight_decay: 0.
+
+  lr: 0.0016
+  betas: [0.9, 0.999]
+  weight_decay: 0.0001
+
+eval_spatial_size: [416, 416]
+train_dataloader:
+  total_batch_size: 128
+  dataset:
+    transforms:
+      ops:
+        # - {type: Mosaic, output_size: 208, rotation_range: 10, translation_range: [0.1, 0.1], scaling_range: [0.5, 1.5],
+        #    probability: 1.0, fill_value: 0, use_cache: True, max_cached_images: 50, random_pop: True}
+        - {type: RandomPhotometricDistort, p: 0.5}
+        - {type: RandomZoomOut, p: 0.5, fill: 0, side_range: [1.0, 1.5]}
+        - {type: RandomIoUCrop, p: 0.8}
+        - {type: SanitizeBoundingBoxes, min_size: 2}
+        # right-front <-> left-front
+        # right-side <-> left-side
+        # right-back <-> left-back
+        # hand_left <-> hand_right
+        - {type: RandomHorizontalFlipWithClass, class_pairs: [[9, 15], [10, 14], [11, 13], [27, 28]]}
+        - {type: Resize, size: [416, 416], }
+        - {type: SanitizeBoundingBoxes, min_size: 2}
+        - {type: ConvertPILImage, dtype: 'float32', scale: True}
+        - {type: ConvertBoxes, fmt: 'cxcywh', normalize: True}
+      policy:
+        # The policy block configures the staged augmentation scheduler used by engine/data/transforms/container.py:57. The loader wraps your ops in Compose, and policy['name'] selects which scheduling routine to run (default, stop_epoch, or stop_sample).
+        # In DEIM configs we rely on stop_epoch (see engine/data/transforms/container.py:77). The dataloader calls set_epoch, so every batch knows the current epoch and the policy can enable/disable transforms dynamically.
+        # Fields for stop_epoch
+        # ops: list of transform class names that the scheduler is allowed to turn on/off (e.g. ['Mosaic', 'RandomPhotometricDistort', ...]). Names must match the actual class names printed when transforms are created.
+        # epoch: either
+        # a single integer → once dataset.epoch >= epoch, transforms listed in ops are skipped; or
+        # a list with three values [no_aug_end, mosaic_end, full_stop] → implements a four-stage schedule (engine/data/transforms/container.py:90).
+        # epoch < no_aug_end: skip all listed ops (pure warmup).
+        # no_aug_end ≤ epoch < mosaic_end: apply listed ops, but Mosaic only fires with mosaic_prob and RandomZoomOut / RandomIoUCrop are suppressed when Mosaic already ran.
+        # mosaic_end ≤ epoch < full_stop: listed ops run every time (no Mosaic special-casing).
+        # epoch ≥ full_stop: listed ops are skipped again for the final no‑augmentation phase.
+        epoch: [4, 250, 400]   # list
+        ops: ['Mosaic', 'RandomPhotometricDistort', 'RandomZoomOut', 'RandomIoUCrop']
+      mosaic_prob: -0.1
+
+  collate_fn:
+    mixup_prob: 0.0
+    mixup_epochs: [40000, 15000]
+    copyblend_prob: 0.0
+    copyblend_epochs: [40000, 15000]
+
+    stop_epoch: 468 # 468 + 32
+    ema_restart_decay: 0.9999
+    base_size: 416
+    base_size_repeat: ~
+
+val_dataloader:
+  total_batch_size: 256
+  dataset:
+    transforms:
+      ops:
+        - {type: Resize, size: [416, 416], }
+        - {type: ConvertPILImage, dtype: 'float32', scale: True}
+  shuffle: False
+  num_workers: 16
+
+
+DEIMCriterion:
+  losses: ['mal', 'boxes']    # , 'local'
+  use_uni_set: False
+
+  matcher:
+    matcher_change_epoch: 450   # FIX This
