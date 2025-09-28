@@ -92,11 +92,11 @@ def generate_scales(base_size, base_size_repeat):
     return scales
 
 
-@register() 
+@register()
 class BatchImageCollateFunction(BaseCollateFunction):
     def __init__(
-        self, 
-        stop_epoch=None, 
+        self,
+        stop_epoch=None,
         ema_restart_decay=0.9999,
         base_size=640,
         base_size_repeat=None,
@@ -189,7 +189,7 @@ class BatchImageCollateFunction(BaseCollateFunction):
 
                 # Add mixup ratio to targets
                 updated_targets[i]['mixup'] = torch.tensor(
-                    [beta] * len(targets[i]['labels']) + [1.0 - beta] * len(shifted_targets[i]['labels']), 
+                    [beta] * len(targets[i]['labels']) + [1.0 - beta] * len(shifted_targets[i]['labels']),
                     dtype=torch.float32
                     )
             targets = updated_targets
@@ -208,7 +208,7 @@ class BatchImageCollateFunction(BaseCollateFunction):
                 source_boxes = targets[i]['boxes']
                 source_labels = targets[i]['labels']
                 source_areas = targets[i]['area']
-                
+
                 # filter valid objects
                 valid_objects = [idx for idx in range(len(source_boxes)) if source_areas[idx] >= self.area_threshold]
                 for idx in valid_objects:
@@ -218,15 +218,15 @@ class BatchImageCollateFunction(BaseCollateFunction):
                     objects_pool['image_idx'].append(i)
                     objects_pool['image_height'].append(img_height)
                     objects_pool['image_width'].append(img_width)
-            
+
             # check if objects_pool is empty
             if len(objects_pool['boxes']) == 0:
                 return images, targets
-            
+
             # convert list to tensor for convenient operation
             for key in ['boxes', 'labels', 'areas']:
                 objects_pool[key] = torch.stack(objects_pool[key]) if objects_pool[key] else torch.tensor([])
-                
+
             # apply CopyBlend
             batch_size = len(images)
             updated_images = images.clone()
@@ -237,11 +237,11 @@ class BatchImageCollateFunction(BaseCollateFunction):
                 if self.random_num_objects:
                     num_objects = random.randint(1, min(self.num_objects, len(objects_pool['boxes'])))
                 else:
-                    num_objects = self.num_objects
-                
+                    num_objects = min(self.num_objects, len(objects_pool['boxes']))
+
                 # randomly select objects to blend
                 selected_indices = random.sample(range(len(objects_pool['boxes'])), num_objects)
-                
+
                 blend_boxes = []
                 blend_labels = []
                 blend_areas = []
@@ -255,7 +255,7 @@ class BatchImageCollateFunction(BaseCollateFunction):
                     source_idx = objects_pool['image_idx'][idx]
                     source_height = objects_pool['image_height'][idx]
                     source_width = objects_pool['image_width'][idx]
-                    
+
                     # calculate source object size and position
                     cx, cy, w, h = box
                     x1_src, y1_src = int((cx - w / 2) * source_width), int((cy - h / 2) * source_height)
@@ -274,7 +274,7 @@ class BatchImageCollateFunction(BaseCollateFunction):
                     y1 = random.randint(0, img_height - new_h_px) if new_h_px < img_height else 0
                     # after the above limit, [x2, y2] will not be out of bound, so no need to check
                     x2, y2 = x1 + new_w_px, y1 + new_h_px
-                    
+
                     # calculate new normalized coordinates
                     new_cx, new_cy = (x1 + new_w_px / 2) / img_width, (y1 + new_h_px / 2) / img_height
                     new_w, new_h = new_w_px / img_width, new_h_px / img_height
@@ -307,16 +307,16 @@ class BatchImageCollateFunction(BaseCollateFunction):
                         updated_images[i, :, y1:y2, x1:x2] = blended_patch
                     else:
                         updated_images[i, :, y1:y2, x1:x2] = copy_patch_orig
-                    
+
                 # add blended objects to targets
                 if len(blend_boxes) > 0:
                     blend_boxes = torch.stack(blend_boxes)
                     blend_labels = torch.stack(blend_labels)
                     blend_areas = torch.stack(blend_areas)
-                    
+
                     # add mixup ratio
                     updated_targets[i]['mixup'] = torch.tensor(
-                        [1.0] * len(updated_targets[i]['boxes']) + blend_mixup_ratios, 
+                        [1.0] * len(updated_targets[i]['boxes']) + blend_mixup_ratios,
                         dtype=torch.float32
                     )
                     # update targets
@@ -338,7 +338,7 @@ class BatchImageCollateFunction(BaseCollateFunction):
                     draw = ImageDraw.Draw(pilImage)
                     print('mix_vis:', i, 'boxes.len=', len(updated_targets[i]['boxes']))
                     for box in updated_targets[i]['boxes']:
-                        draw.rectangle([int(box[0]*640 - (box[2]*640)/2), int(box[1]*640 - (box[3]*640)/2), 
+                        draw.rectangle([int(box[0]*640 - (box[2]*640)/2), int(box[1]*640 - (box[3]*640)/2),
                                         int(box[0]*640 + (box[2]*640)/2), int(box[1]*640 + (box[3]*640)/2)], outline=(255,255,0))
                     pilImage.save(self.vis_save + str(i) + "_"+ str(len(updated_targets[i]['boxes'])) +'_out.jpg')
 
