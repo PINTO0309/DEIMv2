@@ -138,7 +138,7 @@ class ConvertPILImage(T.Transform):
         return inpt
 
 
-@register()
+@register(name='RandomHorizontalFlipWithClass')
 class RandomHorizontalFlipWithClass(T.RandomHorizontalFlip):
     """Horizontally flips inputs and swaps paired class labels when applied.
 
@@ -226,5 +226,3 @@ class RandomHorizontalFlipWithClass(T.RandomHorizontalFlip):
                 if right_mask.any():
                     swapped[right_mask] = left
         return swapped if swapped is not None else labels
-
-RandomHorizontalFlipWithClass = register(name='RandomHorizontalFlipWithClass')(RandomHorizontalFlipWithClass)

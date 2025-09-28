@@ -56,14 +56,16 @@ def main(args, ):
     model = Model()
 
     img_size = cfg.yaml_cfg["eval_spatial_size"]
-    data = torch.rand(32, 3, *img_size)
+    data = torch.rand(1, 3, *img_size)
     size = torch.tensor([img_size])
     _ = model(data, size)
 
-    dynamic_axes = {
-        'images': {0: 'N', },
-        'orig_target_sizes': {0: 'N'}
-    }
+    dynamic_axes = {}
+    if args.dynamic_batch:
+        dynamic_axes = {
+            'images': {0: 'N'},
+            'orig_target_sizes': {0: 'N'}
+        }
 
     output_file = args.resume.replace('.pth', '.onnx') if args.resume else 'model.onnx'
 
@@ -104,6 +106,7 @@ if __name__ == '__main__':
     parser.add_argument('--resume', '-r', type=str, )
     parser.add_argument('--opset', type=int, default=17,)
     parser.add_argument('--check',  action='store_true', default=True,)
-    parser.add_argument('--simplify',  action='store_true', default=True,)
+    parser.add_argument('--simplify',  action='store_true', default=True)
+    parser.add_argument('--dynamic_batch',  action='store_true')
     args = parser.parse_args()
     main(args)
