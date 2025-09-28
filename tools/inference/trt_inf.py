@@ -1,21 +1,24 @@
 """
+DEIMv2: Real-Time Object Detection Meets DINOv3
+Copyright (c) 2025 The DEIMv2 Authors. All Rights Reserved.
+---------------------------------------------------------------------------------
+Modified from D-FINE (https://github.com/Peterande/D-FINE)
 Copyright (c) 2024 The D-FINE Authors. All Rights Reserved.
 """
 
-import time
-import contextlib
 import collections
+import contextlib
+import os
+import time
 from collections import OrderedDict
 
+import cv2  # Added for video processing
 import numpy as np
-from PIL import Image, ImageDraw
-
+import tensorrt as trt
 import torch
 import torchvision.transforms as T
+from PIL import Image, ImageDraw
 
-import tensorrt as trt
-import cv2  # Added for video processing
-import os
 
 class TimeProfiler(contextlib.ContextDecorator):
     def __init__(self):
@@ -132,13 +135,13 @@ def draw(images, labels, boxes, scores, thrh=0.4):
 
     return images
 
-def process_image(m, file_path, device):
+def process_image(m, file_path, device, size=(640, 640)):
     im_pil = Image.open(file_path).convert('RGB')
     w, h = im_pil.size
     orig_size = torch.tensor([w, h])[None].to(device)
 
     transforms = T.Compose([
-        T.Resize((640, 640)),
+        T.Resize(size),
         T.ToTensor(),
     ])
     im_data = transforms(im_pil)[None]
@@ -153,7 +156,7 @@ def process_image(m, file_path, device):
     result_images[0].save('trt_result.jpg')
     print("Image processing complete. Result saved as 'result.jpg'.")
 
-def process_video(m, file_path, device):
+def process_video(m, file_path, device, size=(640, 640)):
     cap = cv2.VideoCapture(file_path)
 
     # Get video properties
@@ -166,7 +169,7 @@ def process_video(m, file_path, device):
     out = cv2.VideoWriter('trt_result.mp4', fourcc, fps, (orig_w, orig_h))
 
     transforms = T.Compose([
-        T.Resize((640, 640)),
+        T.Resize(size),
         T.ToTensor(),
     ])
 
@@ -215,15 +218,18 @@ if __name__ == '__main__':
     parser.add_argument('-trt', '--trt', type=str, required=True)
     parser.add_argument('-i', '--input', type=str, required=True)
     parser.add_argument('-d', '--device', type=str, default='cuda:0')
+    parser.add_argument('-s', '--size', type=int, required=True, help='input size, e.g., 640')
+
 
     args = parser.parse_args()
 
     m = TRTInference(args.trt, device=args.device)
+    size = (args.size,) * 2
 
     file_path = args.input
     if os.path.splitext(file_path)[-1].lower() in ['.jpg', '.jpeg', '.png', '.bmp']:
         # Process as image
-        process_image(m, file_path, args.device)
+        process_image(m, file_path, args.device, size)
     else:
         # Process as video
-        process_video(m, file_path, args.device)
+        process_video(m, file_path, args.device, size)

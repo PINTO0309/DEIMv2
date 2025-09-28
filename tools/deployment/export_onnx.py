@@ -1,4 +1,7 @@
 """
+DEIMv2: Real-Time Object Detection Meets DINOv3
+Copyright (c) 2025 The DEIMv2 Authors. All Rights Reserved.
+---------------------------------------------------------------------------------
 D-FINE: Redefine Regression Task of DETRs as Fine-grained Distribution Refinement
 Copyright (c) 2024 The D-FINE Authors. All Rights Reserved.
 ---------------------------------------------------------------------------------
@@ -8,6 +11,7 @@ Copyright (c) 2023 lyuwenyu. All Rights Reserved.
 
 import os
 import sys
+
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), '../..'))
 
 import torch
@@ -51,8 +55,9 @@ def main(args, ):
 
     model = Model()
 
-    data = torch.rand(32, 3, 640, 640)
-    size = torch.tensor([[640, 640]])
+    img_size = cfg.yaml_cfg["eval_spatial_size"]
+    data = torch.rand(32, 3, *img_size)
+    size = torch.tensor([img_size])
     _ = model(data, size)
 
     dynamic_axes = {
@@ -69,7 +74,7 @@ def main(args, ):
         input_names=['images', 'orig_target_sizes'],
         output_names=['labels', 'boxes', 'scores'],
         dynamic_axes=dynamic_axes,
-        opset_version=16,
+        opset_version=args.opset,
         verbose=False,
         do_constant_folding=True,
     )
@@ -97,6 +102,7 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     parser.add_argument('--config', '-c', default='configs/dfine/dfine_hgnetv2_l_coco.yml', type=str, )
     parser.add_argument('--resume', '-r', type=str, )
+    parser.add_argument('--opset', type=int, default=17,)
     parser.add_argument('--check',  action='store_true', default=True,)
     parser.add_argument('--simplify',  action='store_true', default=True,)
     args = parser.parse_args()
