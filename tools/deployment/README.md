@@ -59,7 +59,10 @@ INFO: total elapsed time:  1635.331392288208 ms
 INFO: avg elapsed time per pred:  163.5331392288208 ms
 INFO: output_name.1: label_xyxy_score shape: [5, 300, 6] dtype: float32
 
-uv run sit4onnx -if deimv2_dinov3_x_coco_300query_n_batch.onnx -fs 1 3 640 640 -oep tensorrt
+uv run sit4onnx \
+-if deimv2_dinov3_x_coco_300query_n_batch.onnx \
+-fs 1 3 640 640 \
+-oep tensorrt
 
 INFO: file: deimv2_dinov3_x_coco_300query_n_batch.onnx
 INFO: providers: ['TensorrtExecutionProvider', 'CPUExecutionProvider']
