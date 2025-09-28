@@ -1,3 +1,7 @@
+# This fork `uv` branch only has some parameters customized for learning WholebodyXX. Also, ONNX/TensorRT optimization.
+
+---
+
 <h2 align="center">
   Real-Time Object Detection Meets DINOv3
 </h2>
