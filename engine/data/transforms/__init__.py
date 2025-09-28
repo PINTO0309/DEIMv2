@@ -10,6 +10,7 @@ from ._transforms import (
     RandomZoomOut,
     RandomIoUCrop,
     RandomHorizontalFlip,
+    RandomHorizontalFlipWithClass,
     Resize,
     PadToSize,
     SanitizeBoundingBoxes,

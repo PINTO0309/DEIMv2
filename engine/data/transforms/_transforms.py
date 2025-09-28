@@ -13,7 +13,8 @@ import torchvision.transforms.v2.functional as F
 import PIL
 import PIL.Image
 
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Sequence, Tuple
+from torch.utils._pytree import tree_flatten, tree_unflatten
 
 from .._misc import convert_to_tv_tensor, _boxes_keys
 from .._misc import Image, Video, Mask, BoundingBoxes
@@ -135,3 +136,95 @@ class ConvertPILImage(T.Transform):
         inpt = Image(inpt)
 
         return inpt
+
+
+@register()
+class RandomHorizontalFlipWithClass(T.RandomHorizontalFlip):
+    """Horizontally flips inputs and swaps paired class labels when applied.
+
+    Args:
+        p (float): Probability of applying the flip.
+        class_pairs (Sequence[Sequence[int]] | None): Iterable of class index pairs that
+            should be swapped when the flip is performed. Each pair should contain two
+            distinct integers, e.g. ``[[1, 2], [3, 4]]``. If omitted, the transform
+            behaves identically to :class:`RandomHorizontalFlip`.
+    """
+
+    def __init__(self, p: float = 0.5, class_pairs: Optional[Sequence[Sequence[int]]] = None) -> None:
+        super().__init__(p=p)
+        self._class_pairs: Tuple[Tuple[int, int], ...] = self._normalize_pairs(class_pairs)
+
+    @staticmethod
+    def _normalize_pairs(class_pairs: Optional[Sequence[Sequence[int]]]) -> Tuple[Tuple[int, int], ...]:
+        if class_pairs is None:
+            return tuple()
+
+        normalized: List[Tuple[int, int]] = []
+        seen = set()
+        for pair in class_pairs:
+            if len(pair) != 2:
+                raise ValueError('Each class pair must contain exactly two class indices.')
+            left, right = int(pair[0]), int(pair[1])
+            if left == right:
+                continue
+            key = tuple(sorted((left, right)))
+            if key in seen:
+                continue
+            seen.add(key)
+            normalized.append((left, right))
+
+        return tuple(normalized)
+
+    def forward(self, *inputs: Any) -> Any:
+        inputs = inputs if len(inputs) > 1 else inputs[0]
+        flat_inputs, spec = tree_flatten(inputs)
+
+        self.check_inputs(flat_inputs)
+
+        if torch.rand(1) >= self.p:
+            return inputs
+
+        needs_transform_list = self._needs_transform_list(flat_inputs)
+        params = self.make_params(
+            [inpt for (inpt, needs_transform) in zip(flat_inputs, needs_transform_list) if needs_transform]
+        )
+
+        flat_outputs = [
+            self.transform(inpt, params) if needs_transform else inpt
+            for (inpt, needs_transform) in zip(flat_inputs, needs_transform_list)
+        ]
+
+        outputs = tree_unflatten(flat_outputs, spec)
+
+        if self._class_pairs:
+            self._swap_class_labels_inplace(outputs)
+
+        return outputs
+
+    def _swap_class_labels_inplace(self, data: Any) -> None:
+        if isinstance(data, dict):
+            labels = data.get('labels')
+            if isinstance(labels, torch.Tensor) and labels.numel() > 0:
+                data['labels'] = self._swap_labels(labels)
+            for value in data.values():
+                self._swap_class_labels_inplace(value)
+        elif isinstance(data, (list, tuple)):
+            for value in data:
+                self._swap_class_labels_inplace(value)
+
+    def _swap_labels(self, labels: torch.Tensor) -> torch.Tensor:
+        original = labels
+        swapped: Optional[torch.Tensor] = None
+        for left, right in self._class_pairs:
+            left_mask = original == left
+            right_mask = original == right
+            if left_mask.any() or right_mask.any():
+                if swapped is None:
+                    swapped = labels.clone()
+                if left_mask.any():
+                    swapped[left_mask] = right
+                if right_mask.any():
+                    swapped[right_mask] = left
+        return swapped if swapped is not None else labels
+
+RandomHorizontalFlipWithClass = register(name='RandomHorizontalFlipWithClass')(RandomHorizontalFlipWithClass)
