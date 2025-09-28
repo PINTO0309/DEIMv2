@@ -237,7 +237,7 @@ class BatchImageCollateFunction(BaseCollateFunction):
                 if self.random_num_objects:
                     num_objects = random.randint(1, min(self.num_objects, len(objects_pool['boxes'])))
                 else:
-                    num_objects = min(self.num_objects, len(objects_pool['boxes']))
+                    num_objects = self.num_objects
 
                 # randomly select objects to blend
                 selected_indices = random.sample(range(len(objects_pool['boxes'])), num_objects)
