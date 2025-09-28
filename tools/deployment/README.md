@@ -29,3 +29,18 @@ uv run python tools/deployment/make_prep.py
 ```
 
 <img width="808" height="704" alt="image" src="https://github.com/user-attachments/assets/82606a50-c294-43f2-b617-a653a6ba5424" />
+
+```bash
+uv run sit4onnx \
+-if deimv2_dinov3_x_coco_300query_n_batch.onnx \
+-fs 1 3 640 640 \
+-oep cpu
+
+INFO: file: deimv2_dinov3_x_coco_300query_n_batch.onnx
+INFO: providers: ['CPUExecutionProvider']
+INFO: input_name.1: input_bgr shape: [1, 3, 640, 640] dtype: float32
+INFO: test_loop_count: 10
+INFO: total elapsed time:  4484.5130443573 ms
+INFO: avg elapsed time per pred:  448.45130443573 ms
+INFO: output_name.1: label_xyxy_score shape: [1, 300, 6] dtype: float32
+```
