@@ -11,8 +11,8 @@ uv run python tools/deployment/export_onnx.py \
 -r ckpts/${WEIGHT}.pth \
 --opset 17
 
-onnxslim ${WEIGHT}_${QUERIES}query.onnx ${WEIGHT}_${QUERIES}query.onnx
-onnxsim ${WEIGHT}_${QUERIES}query.onnx ${WEIGHT}_${QUERIES}query.onnx
+uv run onnxslim ${WEIGHT}_${QUERIES}query.onnx ${WEIGHT}_${QUERIES}query.onnx
+uv run onnxsim ${WEIGHT}_${QUERIES}query.onnx ${WEIGHT}_${QUERIES}query.onnx
 
 uv run python tools/deployment/export_onnx.py \
 -c configs/deimv2/${WEIGHT}.yml \
@@ -20,8 +20,8 @@ uv run python tools/deployment/export_onnx.py \
 --opset 17 \
 --dynamic_batch
 
-onnxslim ${WEIGHT}_${QUERIES}query_n_batch.onnx ${WEIGHT}_${QUERIES}query_n_batch.onnx
-onnxsim ${WEIGHT}_${QUERIES}query_n_batch.onnx ${WEIGHT}_${QUERIES}query_n_batch.onnx
+uv run onnxslim ${WEIGHT}_${QUERIES}query_n_batch.onnx ${WEIGHT}_${QUERIES}query_n_batch.onnx
+uv run onnxsim ${WEIGHT}_${QUERIES}query_n_batch.onnx ${WEIGHT}_${QUERIES}query_n_batch.onnx
 ```
 
 ```bash
