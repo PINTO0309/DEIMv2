@@ -76,13 +76,12 @@ optimizer:
       params: '^(?=.*(?:encoder|decoder))(?=.*(?:norm|bn|bias)).*$'
       weight_decay: 0.
 
-  lr: 0.0016
+  lr: 0.0004 # 0.0016 / 4 * GPUs
   betas: [0.9, 0.999]
-  weight_decay: 0.0001
+  weight_decay: 0.000025 # 0.0001 / 4 * GPUs
 
 eval_spatial_size: [640, 640]
 train_dataloader:
-  total_batch_size: 128
   dataset:
     transforms:
       ops:
@@ -116,6 +115,8 @@ train_dataloader:
         epoch: [4, 250, 400]   # list
         ops: ['Mosaic', 'RandomPhotometricDistort', 'RandomZoomOut', 'RandomIoUCrop']
       mosaic_prob: -0.1
+  total_batch_size: 4 # total batch size equals to 32 (4 GPUs * 8 batch)
+  num_workers: 4
 
   collate_fn:
     mixup_prob: 0.0
@@ -128,14 +129,14 @@ train_dataloader:
     base_size_repeat: ~
 
 val_dataloader:
-  total_batch_size: 256
   dataset:
     transforms:
       ops:
         - {type: Resize, size: [640, 640], }
         - {type: ConvertPILImage, dtype: 'float32', scale: True}
   shuffle: False
-  num_workers: 16
+  total_batch_size: 16 # total batch size equals to 64 (4 GPUs * 16 batch)
+  num_workers: 4
 
 
 DEIMCriterion:

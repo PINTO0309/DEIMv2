@@ -42,6 +42,9 @@ DEIMTransformer:
 PostProcessor:
   num_top_queries: 1750
 
+## DEIM LR-Scheduler
+epoches: 58 # 72 + 2n  # Increase to search for the optimal ema
+
 optimizer:
   type: AdamW
   params:
@@ -59,9 +62,9 @@ optimizer:
       params: '^(?=.*(?:sta|encoder|decoder))(?=.*(?:norm|bn|bias)).*$'
       weight_decay: 0.
 
-  lr: 0.0005
+  lr: 0.000125 # 0.0005 / 4 * GPUs
   betas: [0.9, 0.999]
-  weight_decay: 0.000125
+  weight_decay: 0.00003125 # 0.000125 / 4 * GPUs
 
 ## Dense O2O: Mosaic + Mixup + CopyBlend
 train_dataloader:
@@ -88,6 +91,8 @@ train_dataloader:
         epoch: [4, 29, 50]   # list
         ops: ['Mosaic', 'RandomPhotometricDistort', 'RandomZoomOut', 'RandomIoUCrop']
       mosaic_prob: -0.1
+  total_batch_size: 4 # total batch size equals to 32 (4 GPUs * 8 batch)
+  num_workers: 4
 
   collate_fn:
     mixup_prob: 0.0
@@ -104,3 +109,5 @@ val_dataloader:
         - {type: Resize, size: [640, 640], }
         - {type: ConvertPILImage, dtype: 'float32', scale: True}
         - {type: Normalize, mean: [0.485, 0.456, 0.406], std: [0.229, 0.224, 0.225]}
+  total_batch_size: 16 # total batch size equals to 64 (4 GPUs * 16 batch)
+  num_workers: 4

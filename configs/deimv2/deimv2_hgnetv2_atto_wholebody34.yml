@@ -71,13 +71,12 @@ optimizer:
     - params: '^(?=.*(?:encoder|decoder))(?=.*(?:norm|bn)).*$'    # except bias
       weight_decay: 0.
 
-  lr: 0.002
+  lr: 0.0005 # 0.002 / 4 * GPUs
   betas: [0.9, 0.999]
-  weight_decay: 0.0001
+  weight_decay: 0.000025 # 0.0001 / 4 * GPUs
 
 eval_spatial_size: [320, 320]
 train_dataloader:
-  total_batch_size: 128
   dataset:
     transforms:
       ops:
@@ -110,6 +109,8 @@ train_dataloader:
         # epoch ≥ full_stop: listed ops are skipped again for the final no‑augmentation phase.
         epoch: [4, 250, 400]   # list
       mosaic_prob: -0.1
+  total_batch_size: 4 # total batch size equals to 32 (4 GPUs * 8 batch)
+  num_workers: 4
 
   collate_fn:
     mixup_prob: 0.0
@@ -123,14 +124,14 @@ train_dataloader:
     base_size_repeat: ~
 
 val_dataloader:
-  total_batch_size: 256
   dataset:
     transforms:
       ops:
         - {type: Resize, size: [320, 320], }
         - {type: ConvertPILImage, dtype: 'float32', scale: True}
   shuffle: False
-  num_workers: 16
+  total_batch_size: 16 # total batch size equals to 64 (4 GPUs * 16 batch)
+  num_workers: 4
 
 
 DEIMCriterion:
