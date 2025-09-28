@@ -144,3 +144,4 @@ dmypy.json
 .DS_Store
 
 tools/dataset/wholebody*/
+tools/dataset/wholebody*
