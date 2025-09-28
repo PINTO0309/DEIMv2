@@ -1,5 +1,5 @@
 __include__: [
-  '../dataset/coco_detection.yml',
+  '../dataset/wholebody34.yml',
   '../runtime.yml',
   '../base/dataloader.yml',
   '../base/optimizer.yml',
