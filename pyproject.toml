@@ -7,6 +7,7 @@ requires-python = "==3.11.12"
 dependencies = [
     "calflops==0.3.2",
     "faster-coco-eval==1.6.7",
+    "mmcv==2.2.0",
     "pyyaml==6.0.3",
     "scipy==1.16.2",
     "tensorboard==2.20.0",
