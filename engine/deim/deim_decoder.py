@@ -511,14 +511,13 @@ class DEIMTransformer(nn.Module):
 
         topk_ind: torch.Tensor
 
-        topk_anchors = outputs_anchors_unact.gather(dim=1, \
-            index=topk_ind.unsqueeze(-1).repeat(1, 1, outputs_anchors_unact.shape[-1]))
-
-        topk_logits = outputs_logits.gather(dim=1, \
-            index=topk_ind.unsqueeze(-1).repeat(1, 1, outputs_logits.shape[-1])) if self.training else None
-
-        topk_memory = memory.gather(dim=1, \
-            index=topk_ind.unsqueeze(-1).repeat(1, 1, memory.shape[-1]))
+        topk_ind = topk_ind.unsqueeze(-1)
+        t1 = torch.ones(topk_ind.shape[0], 1, outputs_anchors_unact.shape[-1], dtype=torch.int64, device=outputs_anchors_unact.device)
+        t2 = torch.ones(topk_ind.shape[0], topk_ind.shape[1], outputs_logits.shape[-1], dtype=torch.int64, device=outputs_logits.device)
+        t3 = torch.ones(topk_ind.shape[0], topk_ind.shape[1], memory.shape[-1], dtype=torch.int64, device=memory.device)
+        topk_anchors = (outputs_anchors_unact * t1).gather(dim=1, index=topk_ind)
+        topk_logits = outputs_logits.gather(dim=1, index=topk_ind * t2) if self.training else None
+        topk_memory = memory.gather(dim=1, index=topk_ind * t3)
 
         return topk_memory, topk_logits, topk_anchors
 

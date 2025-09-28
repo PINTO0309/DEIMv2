@@ -75,8 +75,7 @@ class PostProcessor(nn.Module):
 
         if self.use_focal_loss:
             scores = F.sigmoid(logits)
-            n, a, c = scores.shape
-            scores, index = torch.topk(scores.reshape([n,a*c]), self.num_top_queries, dim=-1)
+            scores, index = torch.topk(scores.flatten(1), self.num_top_queries, dim=-1)
             if orig_target_sizes is None:
                 scores = scores.unsqueeze(-1)
             index = index.unsqueeze(-1)

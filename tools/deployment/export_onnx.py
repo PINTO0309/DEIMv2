@@ -161,7 +161,7 @@ if __name__ == '__main__':
     parser.add_argument('--size', '-s', nargs=2, default=[640,640], type=int)
     parser.add_argument('--opset', type=int, default=17)
     parser.add_argument('--check',  action='store_true', default=True)
-    parser.add_argument('--simplify',  action='store_true', default=True)
+    parser.add_argument('--simplify',  action='store_true')
     parser.add_argument('--dynamic_batch',  action='store_true')
     parser.add_argument('--fp16', '-f', action='store_true')
     args = parser.parse_args()
