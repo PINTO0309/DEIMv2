@@ -13,6 +13,7 @@ uv run python tools/deployment/export_onnx.py \
 --simplify
 
 uv run onnxslim ${WEIGHT}_${QUERIES}query.onnx ${WEIGHT}_${QUERIES}query.onnx
+uv run onnxsm ${WEIGHT}_${QUERIES}query.onnx ${WEIGHT}_${QUERIES}query.onnx
 
 uv run python tools/deployment/export_onnx.py \
 -c configs/deimv2/${WEIGHT}.yml \
@@ -22,6 +23,7 @@ uv run python tools/deployment/export_onnx.py \
 --simplify
 
 uv run onnxslim ${WEIGHT}_${QUERIES}query_n_batch.onnx ${WEIGHT}_${QUERIES}query_n_batch.onnx
+uv run onnxsim ${WEIGHT}_${QUERIES}query_n_batch.onnx ${WEIGHT}_${QUERIES}query_n_batch.onnx
 ```
 
 ```bash
