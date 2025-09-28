@@ -142,3 +142,5 @@ dmypy.json
 *.zip
 *.html
 .DS_Store
+
+tools/dataset/wholebody*/
