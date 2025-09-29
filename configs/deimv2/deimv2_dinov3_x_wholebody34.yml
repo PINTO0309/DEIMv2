@@ -91,7 +91,7 @@ train_dataloader:
         epoch: [4, 29, 50]   # list
         ops: ['Mosaic', 'RandomPhotometricDistort', 'RandomZoomOut', 'RandomIoUCrop']
       mosaic_prob: -0.1
-  total_batch_size: 4 # total batch size equals to 32 (4 GPUs * 8 batch)
+  total_batch_size: 2 # total batch size equals to 32 (4 GPUs * 8 batch)
   num_workers: 4
 
   collate_fn:
@@ -109,5 +109,5 @@ val_dataloader:
         - {type: Resize, size: [640, 640], }
         - {type: ConvertPILImage, dtype: 'float32', scale: True}
         - {type: Normalize, mean: [0.485, 0.456, 0.406], std: [0.229, 0.224, 0.225]}
-  total_batch_size: 16 # total batch size equals to 64 (4 GPUs * 16 batch)
+  total_batch_size: 8 # total batch size equals to 64 (4 GPUs * 16 batch)
   num_workers: 4
