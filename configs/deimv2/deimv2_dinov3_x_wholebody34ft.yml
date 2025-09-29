@@ -43,7 +43,9 @@ PostProcessor:
   num_top_queries: 1750
 
 ## DEIM LR-Scheduler
-epoches: 58 # 72 + 2n  # Increase to search for the optimal ema
+epoches: 28 # 72 + 2n  # Increase to search for the optimal ema
+flat_epoch: 14
+no_aug_epoch: 8
 
 optimizer:
   type: AdamW
@@ -51,20 +53,20 @@ optimizer:
     -
       # except norm/bn/bias in self.dinov3
       params: '^(?=.*.dinov3)(?!.*(?:norm|bn|bias)).*$'
-      lr: 0.00001
+      lr: 0.000003125
     -
       # including norm/bn/bias in self.dinov3
       params: '^(?=.*.dinov3)(?=.*(?:norm|bn|bias)).*$'
-      lr: 0.00001
+      lr: 0.000003125
       weight_decay: 0.
     -
       # including norm/bn/bias except for the self.dinov3
       params: '^(?=.*(?:sta|encoder|decoder))(?=.*(?:norm|bn|bias)).*$'
       weight_decay: 0.
 
-  lr: 0.000125 # 0.0005 / 4 * GPUs
+  lr: 0.00003125 # 0.0005 / 4 * GPUs
   betas: [0.9, 0.999]
-  weight_decay: 0.00003125 # 0.000125 / 4 * GPUs
+  weight_decay: 0.0000078125 # 0.000125 / 4 * GPUs
 
 ## Dense O2O: Mosaic + Mixup + CopyBlend
 train_dataloader:
@@ -99,7 +101,7 @@ train_dataloader:
         # no_aug_end ≤ epoch < mosaic_end: apply listed ops, but Mosaic only fires with mosaic_prob and RandomZoomOut / RandomIoUCrop are suppressed when Mosaic already ran.
         # mosaic_end ≤ epoch < full_stop: listed ops run every time (no Mosaic special-casing).
         # epoch ≥ full_stop: listed ops are skipped again for the final no‑augmentation phase.
-        epoch: [4, 29, 50]   # list
+        epoch: [4, 14, 20]   # list
         ops: ['Mosaic', 'RandomPhotometricDistort', 'RandomZoomOut', 'RandomIoUCrop']
       mosaic_prob: -0.1
   total_batch_size: 2 # total batch size equals to 32 (4 GPUs * 8 batch)
@@ -107,10 +109,10 @@ train_dataloader:
 
   collate_fn:
     mixup_prob: 0.0
-    mixup_epochs: [4, 29]
-    stop_epoch: 50
+    mixup_epochs: [4, 14]
+    stop_epoch: 20
     copyblend_prob: 0.0
-    copyblend_epochs: [4, 50]
+    copyblend_epochs: [4, 20]
     base_size_repeat: 3
 
 val_dataloader:
@@ -122,3 +124,8 @@ val_dataloader:
         - {type: Normalize, mean: [0.485, 0.456, 0.406], std: [0.229, 0.224, 0.225]}
   total_batch_size: 8 # total batch size equals to 64 (4 GPUs * 16 batch)
   num_workers: 4
+
+## DEIM Loss
+DEIMCriterion:
+  matcher:
+    matcher_change_epoch: 18 # ≈ 0.9 * (epoches - no_aug_epoch)
