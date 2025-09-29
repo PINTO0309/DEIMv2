@@ -102,6 +102,11 @@ class PostProcessor(nn.Module):
             labels = torch.tensor([mscoco_label2category[int(x.item())] for x in labels.flatten()])\
                 .to(boxes.device).reshape(labels.shape)
 
+        if labels.dim() > 2 and labels.size(-1) == 1:
+            labels = labels.squeeze(-1)
+        if scores.dim() > 2 and scores.size(-1) == 1:
+            scores = scores.squeeze(-1)
+
         results = []
         for lab, box, sco in zip(labels, boxes, scores):
             result = dict(labels=lab, boxes=box, scores=sco)
