@@ -7,7 +7,7 @@ __include__: [
 ]
 
 
-output_dir: ./outputs/deimv2_dinov3_x_wholebody34
+output_dir: ./outputs/deimv2_dinov3_x_wholebody34ft
 
 DEIM:
   backbone: DINOv3STAs
