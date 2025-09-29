@@ -147,3 +147,4 @@ tools/dataset/wholebody*/
 tools/dataset/wholebody*
 *.engine
 *.profile
+outputs*.tar.gz
