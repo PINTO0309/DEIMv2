@@ -7,7 +7,9 @@ requires-python = "==3.11.12"
 dependencies = [
     "calflops==0.3.2",
     "faster-coco-eval==1.6.7",
+    "gdown==5.2.0",
     "mmcv==2.2.0",
+    "numpy==1.26.4",
     "onnx==1.19.0",
     "onnx-graphsurgeon==0.5.8",
     "onnxruntime-gpu==1.23.0",
