@@ -6,7 +6,7 @@ __include__: [
   '../base/deimv2.yml',
 ]
 
-output_dir: ./outputs/deimv2_dinov3_s_wholebody34ft.yml
+output_dir: ./outputs/deimv2_dinov3_s_wholebody34ft
 
 DEIM:
   backbone: DINOv3STAs
