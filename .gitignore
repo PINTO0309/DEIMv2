@@ -150,3 +150,4 @@ tools/dataset/wholebody*
 outputs*.tar.gz
 images*/
 output*/
+*.mp4

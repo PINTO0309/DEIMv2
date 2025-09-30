@@ -84,3 +84,4 @@ uv run python demo/wholebody34/demo_deimv2_onnx_wholebody34_with_edges.py \
 -dhm \
 -dlr
 ```
+### 1,750 query
