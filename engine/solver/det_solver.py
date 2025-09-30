@@ -48,7 +48,6 @@ class DetSolver(BaseSolver):
 
         top1 = 0
         ttop1 = 0
-        tcount = 0
         best_stat = {'epoch': -1, }
         # evaluate again before resume training
         if self.last_epoch > 0:
@@ -159,7 +158,7 @@ class DetSolver(BaseSolver):
                     ##### For fine-tuning
                     if self.cfg.tuning:
                         # Skip saving weights for the first epoch only
-                        if tcount > 0 and test_stats[k][0] > ttop1:
+                        if epoch > 0 and test_stats[k][0] > ttop1:
                             ttop1 = test_stats[k][0]
                             dist_utils.save_on_master(self.state_dict(), self.output_dir / 'tuning_best.pth')
 
@@ -168,8 +167,6 @@ class DetSolver(BaseSolver):
                     self.ema.decay -= 0.0001
                     self.load_resume_state(str(self.output_dir / 'best_stg1.pth'))
                     print(f'Refresh EMA at epoch {epoch} with decay {self.ema.decay}')
-
-            tcount += 1
 
             log_stats = {
                 **{f'train_{k}': v for k, v in train_stats.items()},
