@@ -27,7 +27,7 @@ uv run onnxsim ${WEIGHT}_${QUERIES}query_n_batch.onnx ${WEIGHT}_${QUERIES}query_
 ```
 
 ```bash
-uv run python tools/deployment/make_prep.py
+uv run python tools/deployment/make_prep.py -m ${WEIGHT}_${QUERIES}query.onnx
 ```
 
 <img width="808" height="704" alt="image" src="https://github.com/user-attachments/assets/82606a50-c294-43f2-b617-a653a6ba5424" />
