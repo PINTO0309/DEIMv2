@@ -37,7 +37,7 @@ class DetSolver(BaseSolver):
         if args.lrsheduler is not None:
             iter_per_epoch = len(self.train_dataloader)
             print("     ## Using Self-defined Scheduler-{} ## ".format(args.lrsheduler))
-            self.lr_scheduler = FlatCosineLRScheduler(self.optimizer, args.lr_gamma, iter_per_epoch, total_epochs=args.epoches, 
+            self.lr_scheduler = FlatCosineLRScheduler(self.optimizer, args.lr_gamma, iter_per_epoch, total_epochs=args.epoches,
                                                 warmup_iter=args.warmup_iter, flat_epochs=args.flat_epoch, no_aug_epochs=args.no_aug_epoch)
             self.self_lr_scheduler = True
         n_parameters = sum([p.numel() for p in self.model.parameters() if p.requires_grad])
@@ -47,6 +47,7 @@ class DetSolver(BaseSolver):
         print(f'number of non-trainable parameters: {n_parameters}')
 
         top1 = 0
+        ttop1 = 0
         best_stat = {'epoch': -1, }
         # evaluate again before resume training
         if self.last_epoch > 0:
@@ -83,21 +84,21 @@ class DetSolver(BaseSolver):
             train_stats = train_one_epoch(
                 self.self_lr_scheduler,
                 self.lr_scheduler,
-                self.model, 
-                self.criterion, 
-                self.train_dataloader, 
-                self.optimizer, 
-                self.device, 
-                epoch, 
-                max_norm=args.clip_max_norm, 
-                print_freq=args.print_freq, 
-                ema=self.ema, 
-                scaler=self.scaler, 
+                self.model,
+                self.criterion,
+                self.train_dataloader,
+                self.optimizer,
+                self.device,
+                epoch,
+                max_norm=args.clip_max_norm,
+                print_freq=args.print_freq,
+                ema=self.ema,
+                scaler=self.scaler,
                 lr_warmup_scheduler=self.lr_warmup_scheduler,
                 writer=self.writer
             )
 
-            if not self.self_lr_scheduler:  # update by epoch 
+            if not self.self_lr_scheduler:  # update by epoch
                 if self.lr_warmup_scheduler is None or self.lr_warmup_scheduler.finished():
                     self.lr_scheduler.step()
 
@@ -154,12 +155,17 @@ class DetSolver(BaseSolver):
                         top1 = max(test_stats[k][0], top1)
                         dist_utils.save_on_master(self.state_dict(), self.output_dir / 'best_stg1.pth')
 
+                    ##### For fine-tuning
+                    if self.cfg.tuning:
+                        if test_stats[k][0] > ttop1:
+                            ttop1 = test_stats[k][0]
+                            dist_utils.save_on_master(self.state_dict(), self.output_dir / 'tuning_best.pth')
+
                 elif epoch >= self.train_dataloader.collate_fn.stop_epoch:
                     best_stat = {'epoch': -1, }
                     self.ema.decay -= 0.0001
                     self.load_resume_state(str(self.output_dir / 'best_stg1.pth'))
                     print(f'Refresh EMA at epoch {epoch} with decay {self.ema.decay}')
-
 
             log_stats = {
                 **{f'train_{k}': v for k, v in train_stats.items()},
