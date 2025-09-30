@@ -530,7 +530,7 @@ If you use `DEIMv2` or its methods in your work, please cite the following BibTe
 </details>
 
 ## 6. Acknowledgement
-Our work is built upon [D-FINE](https://github.com/Peterande/D-FINE), [RT-DETR](https://github.com/lyuwenyu/RT-DETR) and [DINOv3](https://github.com/facebookresearch/dinov3). Thanks for their great work!
+Our work is built upon [D-FINE](https://github.com/Peterande/D-FINE), [RT-DETR](https://github.com/lyuwenyu/RT-DETR), [DEIM](https://github.com/ShihuaHuang95/DEIM), and [DINOv3](https://github.com/facebookresearch/dinov3). Thanks for their great work!
 
 ✨ Feel free to contribute and reach out if you have any questions! ✨
 
