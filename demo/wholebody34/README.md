@@ -69,6 +69,9 @@ python demo/wholebody34/demo_deimv2_onnx_wholebody34_with_edges.py \
 -dhm \
 -dlr
 ```
+|Image|Image|
+|:-:|:-:|
+|![000000009420](https://github.com/user-attachments/assets/a12b8f9d-0277-4a3c-8f06-faa58cfc06f8)|![000000014428](https://github.com/user-attachments/assets/f62fe90f-4933-4702-a0c3-438ded0790cd)|
 ### USBCam or Video files
 ```bash
 python demo/wholebody34/demo_deimv2_onnx_wholebody34_with_edges.py \
