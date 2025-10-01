@@ -9,6 +9,8 @@ Copyright (c) 2024 D-FINE authors. All Rights Reserved.
 import time
 import json
 import datetime
+import re
+from typing import List, Tuple
 
 import torch
 
@@ -60,6 +62,7 @@ class DetSolver(BaseSolver):
                 self.evaluator,
                 self.device
             )
+            self._report_validation(coco_evaluator, self.last_epoch)
             for k in test_stats:
                 best_stat['epoch'] = self.last_epoch
                 best_stat[k] = test_stats[k][0]
@@ -121,6 +124,8 @@ class DetSolver(BaseSolver):
                 self.evaluator,
                 self.device
             )
+
+            self._report_validation(coco_evaluator, epoch)
 
             for k in test_stats:
                 if self.writer and dist_utils.is_main_process():
@@ -202,7 +207,217 @@ class DetSolver(BaseSolver):
         test_stats, coco_evaluator = evaluate(module, self.criterion, self.postprocessor,
                 self.val_dataloader, self.evaluator, self.device)
 
+        self._report_validation(coco_evaluator, max(self.last_epoch, 0))
+
         if self.output_dir:
             dist_utils.save_on_master(coco_evaluator.coco_eval["bbox"].eval, self.output_dir / "eval.pth")
 
         return
+
+    # --- helper methods for validation console output ---
+
+    def _collect_coco_metrics(self, coco_eval) -> dict:
+        stats = getattr(coco_eval, 'stats', None)
+        if stats is None or len(stats) == 0:
+            return {}
+
+        labels = [
+            ('map', 0),
+            ('map_50', 1),
+            ('map_75', 2),
+            ('map_small', 3),
+            ('map_medium', 4),
+            ('map_large', 5),
+            ('mar_1', 6),
+            ('mar_10', 7),
+            ('mar_100', 8),
+            ('mar_small', 9),
+            ('mar_medium', 10),
+            ('mar_large', 11),
+        ]
+
+        metrics = {}
+        for name, idx in labels:
+            if idx < len(stats):
+                metrics[name] = float(stats[idx])
+
+        return metrics
+
+    def _collect_per_class_ap(self, coco_eval) -> List[Tuple[int, float]]:
+        eval_dict = getattr(coco_eval, 'eval', None)
+        if not eval_dict or 'precision' not in eval_dict:
+            return []
+
+        precisions = eval_dict['precision']
+        if precisions.size == 0:
+            return []
+
+        cat_ids = coco_eval.params.catIds
+        if not cat_ids:
+            return []
+
+        dataset = getattr(self.val_dataloader, 'dataset', None)
+        label2cat = getattr(dataset, 'label2category', None)
+
+        if label2cat is not None:
+            cat2label = {cat_id: label for label, cat_id in label2cat.items()}
+            num_classes = len(label2cat)
+            per_class = [float('nan')] * num_classes
+        else:
+            cat2label = {cat_id: idx for idx, cat_id in enumerate(cat_ids)}
+            per_class = [float('nan')] * len(cat_ids)
+
+        for cat_idx, cat_id in enumerate(cat_ids):
+            label_idx = cat2label.get(cat_id)
+            if label_idx is None:
+                continue
+
+            precision = precisions[:, :, cat_idx, 0, -1]
+            valid = precision[precision > -1]
+            if valid.size == 0:
+                ap = float('nan')
+            else:
+                ap = float(valid.mean())
+            per_class[label_idx] = ap
+
+        return list(enumerate(per_class))
+
+    def _resolve_class_names(self) -> List[str]:
+        dataset = getattr(self.val_dataloader, 'dataset', None)
+        if dataset is not None and hasattr(dataset, 'label2category') and hasattr(dataset, 'category2name'):
+            label2category = dataset.label2category
+            category2name = dataset.category2name
+            names = []
+            for label in range(len(label2category)):
+                cat_id = label2category[label]
+                names.append(category2name.get(cat_id, str(cat_id)))
+            return names
+
+        coco_eval = getattr(self.evaluator, 'coco_eval', None)
+        if coco_eval and 'bbox' in coco_eval:
+            gt = coco_eval['bbox'].cocoGt
+            if hasattr(gt, 'cats'):
+                cat_ids = coco_eval['bbox'].params.catIds
+                return [gt.cats[cid]['name'] for cid in cat_ids]
+
+        return []
+
+    def _print_map_per_class_table(self, per_class, class_names, title: str):
+        if not per_class:
+            return
+
+        max_id_digits = 3
+        name_width = 25
+        ap_width = 7
+        col_height = 20
+        num_cols = 3
+
+        def cell_text(idx: int, name: str, ap: float) -> str:
+            name = name[:name_width] if name else ''
+            ap_val = '-' if ap != ap else f"{ap:.4f}"
+            return f"{str(idx).rjust(max_id_digits)}│{name.ljust(name_width)}│{ap_val.rjust(ap_width)}"
+
+        def build_border(left: str, inner: str, between: str, right: str, fill: str) -> str:
+            seg = (fill * max_id_digits) + inner + (fill * name_width) + inner + (fill * ap_width)
+            return left + (seg + between) * (num_cols - 1) + seg + right
+
+        top = build_border("┏", "┳", "┳", "┓", "━")
+        header_sep = build_border("┡", "╇", "╇", "┩", "━")
+        bottom = build_border("└", "┴", "┴", "┘", "─")
+
+        def bold(text: str) -> str:
+            return f"\033[1m{text}\033[0m"
+
+        header_cell = f"{bold('ID'.rjust(max_id_digits))}┃{bold('Name'.ljust(name_width))}┃{bold('AP'.rjust(ap_width))}"
+
+        def ljust_ansi(text: str, width: int) -> str:
+            stripped = re.sub(r"\x1b\[[0-9;]*m", "", text)
+            pad = max(0, width - len(stripped))
+            return text + (' ' * pad)
+
+        col_width = max_id_digits + 1 + name_width + 1 + ap_width
+        header_row = "┃" + "┃".join(ljust_ansi(header_cell, col_width) for _ in range(num_cols)) + "┃"
+
+        entries = []
+        for idx, ap in per_class:
+            name = class_names[idx] if idx < len(class_names) else ''
+            entries.append(cell_text(idx, name, ap))
+
+        empty_cell = (" " * max_id_digits) + "│" + (" " * name_width) + "│" + (" " * ap_width)
+        col_lines = []
+        for row in range(col_height):
+            row_cells = []
+            for col in range(num_cols):
+                pos = col * col_height + row
+                value = entries[pos] if pos < len(entries) else empty_cell
+                row_cells.append(value.ljust(col_width))
+            col_lines.append("│" + "│".join(row_cells) + "│")
+
+        print(title)
+        print("\n".join([top, header_row, header_sep] + col_lines + [bottom]))
+
+    def _print_ap_ar_combined_table(self, metrics: dict, epoch: int):
+        def fmt(value):
+            return '-' if value is None or value != value else f"{value * 100:06.2f}"
+
+        ap_rows = [
+            ("AP @ .5:.95", metrics.get('map')),
+            ("AP @     .5", metrics.get('map_50')),
+            ("AP @    .75", metrics.get('map_75')),
+            ("AP  (small)", metrics.get('map_small')),
+            ("AP (medium)", metrics.get('map_medium')),
+            ("AP  (large)", metrics.get('map_large')),
+        ]
+
+        ar_rows = [
+            ("AR maxDets   1", metrics.get('mar_1')),
+            ("AR maxDets  10", metrics.get('mar_10')),
+            ("AR maxDets 100", metrics.get('mar_100')),
+            ("AR     (small)", metrics.get('mar_small')),
+            ("AR    (medium)", metrics.get('mar_medium')),
+            ("AR     (large)", metrics.get('mar_large')),
+        ]
+
+        epoch_width = 5
+        label_width = 16
+        pct_width = 6
+
+        def border(l, j1, j2, r, fill):
+            seg = (fill * epoch_width) + j1 + (fill * label_width) + j1 + (fill * pct_width) + j2 + (fill * label_width) + j1 + (fill * pct_width)
+            return l + seg + r
+
+        top = border("┏", "┳", "┳", "┓", "━")
+        mid = border("┡", "╇", "╇", "┩", "━")
+        bottom = border("└", "┴", "┴", "┘", "─")
+
+        header = f"┃{'Epoch'.rjust(epoch_width)}┃{'Avg. Precision'.ljust(label_width)}┃{'%'.rjust(pct_width)}╇{'Avg. Recall'.ljust(label_width)}┃{'%'.rjust(pct_width)}┃"
+
+        lines = [top, header, mid]
+        for ap, ar in zip(ap_rows, ar_rows):
+            epoch_str = str(epoch).rjust(epoch_width)
+            ap_label = ap[0].ljust(label_width)[:label_width]
+            ar_label = ar[0].ljust(label_width)[:label_width]
+            ap_pct = fmt(ap[1]).rjust(pct_width)
+            ar_pct = fmt(ar[1]).rjust(pct_width)
+            lines.append(f"│{epoch_str}│{ap_label}│{ap_pct}╎{ar_label}│{ar_pct}│")
+
+        print("\n".join(lines + [bottom]))
+    def _report_validation(self, coco_evaluator, epoch=None):
+        if not dist_utils.is_main_process():
+            return
+
+        if coco_evaluator is None or 'bbox' not in coco_evaluator.coco_eval:
+            return
+
+        coco_eval = coco_evaluator.coco_eval['bbox']
+        metrics = self._collect_coco_metrics(coco_eval)
+
+        if metrics:
+            epoch_value = 0 if epoch is None else epoch
+            self._print_ap_ar_combined_table(metrics, epoch_value)
+
+        per_class = self._collect_per_class_ap(coco_eval)
+        if per_class:
+            class_names = self._resolve_class_names()
+            title = "Per-class mAP:" if metrics else "Per-class mAP (inference):"
+            self._print_map_per_class_table(per_class, class_names, title)
