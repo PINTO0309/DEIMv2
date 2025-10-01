@@ -126,8 +126,25 @@ val_dataloader:
   num_workers: 4
 
 DEIMCriterion:
+  weight_dict:
+    loss_kl: 1.0
+  losses: ['mal', 'boxes', 'local', 'kl']
+  kl_cfg:
+    enabled: True
+    temperature:
+      start: 4.0
+      end: 1.0
+      schedule: cosine
   matcher:
     # change matcher
     change_matcher: True
     iou_order_alpha: 4.0
     matcher_change_epoch: 18 # ≈ 0.9 * (epoches - no_aug_epoch)
+
+distillation:
+  enabled: True
+  teacher_config: ./configs/deimv2/deimv2_dinov3_x_wholebody34.yml
+  teacher_checkpoint: ./outputs/deimv2_dinov3_x_wholebody34/best_stg2.pth
+  teacher_force_train_mode: True
+  teacher_expects_targets: True
+  propagate_aux_outputs: True

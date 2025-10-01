@@ -8,6 +8,8 @@ import atexit
 
 from ..misc import dist_utils
 from ..core import BaseConfig
+from ..core.yaml_config import YAMLConfig
+from ..deim.distillation import TeacherStudentWrapper
 
 
 def to(m: nn.Module, device: str):
@@ -45,6 +47,17 @@ class BaseSolver(object):
             device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
         self.model = cfg.model
+
+        distill_cfg = cfg.yaml_cfg.get('distillation') if hasattr(cfg, 'yaml_cfg') else None
+        if distill_cfg and distill_cfg.get('enabled', False):
+            teacher = self._build_teacher(distill_cfg)
+            self.model = TeacherStudentWrapper(
+                student=self.model,
+                teacher=teacher,
+                force_teacher_train_mode=distill_cfg.get('teacher_force_train_mode', True),
+                teacher_expects_targets=distill_cfg.get('teacher_expects_targets', True),
+                propagate_aux_outputs=distill_cfg.get('propagate_aux_outputs', True),
+            )
 
         # NOTE: Must load_tuning_state before EMA instance building
         if self.cfg.tuning:
@@ -160,6 +173,46 @@ class BaseSolver(object):
 
         # state['model'] = remove_module_prefix(state['model'])
         self.load_state_dict(state)
+
+    def _build_teacher(self, distill_cfg: dict) -> nn.Module:
+        teacher_cfg_path = distill_cfg.get('teacher_config')
+        if not teacher_cfg_path:
+            raise ValueError('distillation.enabled is True but teacher_config is not provided.')
+
+        teacher_cfg_updates = distill_cfg.get('teacher_cfg_update', {})
+        if isinstance(teacher_cfg_updates, list):
+            teacher_cfg_updates = {k: v for k, v in teacher_cfg_updates}
+        elif teacher_cfg_updates and not isinstance(teacher_cfg_updates, dict):
+            raise TypeError('teacher_cfg_update must be a dict or list of key/value pairs')
+
+        teacher_yaml = YAMLConfig(teacher_cfg_path, **teacher_cfg_updates)
+        teacher_model = teacher_yaml.model
+
+        teacher_ckpt = distill_cfg.get('teacher_checkpoint')
+        if not teacher_ckpt:
+            raise ValueError('distillation.enabled is True but teacher_checkpoint is not provided.')
+
+        state = torch.load(teacher_ckpt, map_location='cpu')
+        state_dict = None
+        if isinstance(state, dict):
+            if 'ema' in state and isinstance(state['ema'], dict) and 'module' in state['ema']:
+                state_dict = state['ema']['module']
+            elif 'model' in state:
+                state_dict = state['model']
+            else:
+                state_dict = {k: v for k, v in state.items() if isinstance(v, torch.Tensor)}
+        else:
+            raise ValueError(f'Unexpected checkpoint format at {teacher_ckpt}')
+
+        state_dict = remove_module_prefix(state_dict)
+        missing, unexpected = teacher_model.load_state_dict(state_dict, strict=False)
+        if missing:
+            print(f"[TeacherStudentWrapper] Missing keys when loading teacher: {missing}")
+        if unexpected:
+            print(f"[TeacherStudentWrapper] Unexpected keys when loading teacher: {unexpected}")
+
+        teacher_model.eval()
+        return teacher_model
 
     def load_tuning_state(self, path: str):
         """Load model for tuning and adjust mismatched head parameters"""

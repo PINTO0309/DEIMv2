@@ -6,6 +6,7 @@ Modified from D-FINE (https://github.com/Peterande/D-FINE/)
 Copyright (c) 2024 D-FINE Authors. All Rights Reserved.
 """
 
+import math
 import torch
 import torch.nn as nn
 import torch.distributed
@@ -24,7 +25,7 @@ from ..core import register
 class DEIMCriterion(nn.Module):
     """ This class computes the loss for DEIM.
     """
-    __share__ = ['num_classes', ]
+    __share__ = ['num_classes', 'epoches']
     __inject__ = ['matcher', ]
 
     def __init__(self, \
@@ -39,6 +40,8 @@ class DEIMCriterion(nn.Module):
         share_matched_indices=False,
         mal_alpha=None,
         use_uni_set=True,
+        kl_cfg=None,
+        epoches=None,
         ):
         """Create the criterion.
         Parameters:
@@ -64,6 +67,22 @@ class DEIMCriterion(nn.Module):
         self.num_pos, self.num_neg = None, None
         self.mal_alpha = mal_alpha
         self.use_uni_set = use_uni_set
+        self.kl_cfg = kl_cfg or {}
+        temp_cfg = self.kl_cfg.get('temperature', {})
+        self.kl_enabled = self.kl_cfg.get('enabled', False)
+        self.kl_temp_start = temp_cfg.get('start', 1.0)
+        self.kl_temp_end = temp_cfg.get('end', 1.0)
+        self.kl_temp_schedule = temp_cfg.get('schedule', 'constant')
+
+        total_epochs_cfg = temp_cfg.get('total_epochs', None)
+        if total_epochs_cfg is None:
+            total_epochs_cfg = epoches
+        elif isinstance(total_epochs_cfg, str) and total_epochs_cfg.lower() == 'epoches':
+            total_epochs_cfg = epoches
+
+        total_epochs_cfg = total_epochs_cfg if total_epochs_cfg is not None else 1
+        self.kl_temp_total_epochs = max(1, int(total_epochs_cfg))
+        self._current_epoch = 0
 
     def loss_labels_focal(self, outputs, targets, indices, num_boxes):
         assert 'pred_logits' in outputs
@@ -259,6 +278,7 @@ class DEIMCriterion(nn.Module):
             'vfl': self.loss_labels_vfl,
             'mal': self.loss_labels_mal,
             'local': self.loss_local,
+            'kl': self.loss_kl,
         }
         assert loss in loss_map, f'do you really want to compute {loss} loss?'
         return loss_map[loss](outputs, targets, indices, num_boxes, **kwargs)
@@ -270,6 +290,7 @@ class DEIMCriterion(nn.Module):
              targets: list of dicts, such that len(targets) == batch_size.
                       The expected keys in each dict depends on the losses applied, see each loss' doc
         """
+        self._current_epoch = epoch
         outputs_without_aux = {k: v for k, v in outputs.items() if 'aux' not in k}
 
         # Retrieve the matching between the outputs of the last layer and the targets
@@ -405,6 +426,33 @@ class DEIMCriterion(nn.Module):
         # For debugging Objects365 pre-train.
         losses = {k:torch.nan_to_num(v, nan=0.0) for k, v in losses.items()}
         return losses
+
+    def _get_kl_temperature(self, epoch: int) -> float:
+        if not self.kl_enabled:
+            return self.kl_temp_end
+        if self.kl_temp_schedule == 'cosine':
+            total = max(1, self.kl_temp_total_epochs - 1)
+            e = min(max(epoch, 0), self.kl_temp_total_epochs - 1)
+            ratio = e / total if total > 0 else 1.0
+            cosine = 0.5 * (1 + math.cos(math.pi * ratio))
+            return self.kl_temp_end + (self.kl_temp_start - self.kl_temp_end) * cosine
+        return self.kl_temp_start
+
+    def loss_kl(self, outputs, targets, indices, num_boxes, **kwargs):
+        if (not self.kl_enabled) or ('pred_logits' not in outputs) or ('teacher_logits' not in outputs):
+            tensor_ref = outputs.get('pred_logits') or outputs.get('teacher_logits')
+            if tensor_ref is None:
+                tensor_ref = next((v for v in outputs.values() if isinstance(v, torch.Tensor)), None)
+            zero = tensor_ref.new_zeros(()) if tensor_ref is not None else torch.tensor(0.0)
+            return {'loss_kl': zero}
+
+        temperature = self._get_kl_temperature(self._current_epoch)
+        student_logits = outputs['pred_logits'] / temperature
+        teacher_logits = outputs['teacher_logits'] / temperature
+        student_log_probs = F.log_softmax(student_logits, dim=-1)
+        teacher_probs = F.softmax(teacher_logits, dim=-1)
+        loss = F.kl_div(student_log_probs, teacher_probs, reduction='batchmean') * (temperature ** 2)
+        return {'loss_kl': loss}
 
     def get_loss_meta_info(self, loss, outputs, targets, indices):
         if self.boxes_weight_format is None:
