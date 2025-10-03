@@ -146,8 +146,11 @@ def main(args, ):
         import onnx
         import onnxsim
         import onnxslim
-        onnx_model_slim = onnxslim.slim(output_file)
-        onnx_model_simplify, check = onnxsim.simplify(onnx_model_slim)
+        if not args.skip_onnxslim:
+            onnx_model_slim = onnxslim.slim(output_file)
+            onnx_model_simplify, check = onnxsim.simplify(onnx_model_slim)
+        else:
+            onnx_model_simplify, check = onnxsim.simplify(output_file)
         onnx.save(onnx_model_simplify, output_file)
         print(f'Simplify onnx model {check}...')
 
@@ -162,6 +165,7 @@ if __name__ == '__main__':
     parser.add_argument('--opset', type=int, default=17)
     parser.add_argument('--check',  action='store_true', default=True)
     parser.add_argument('--simplify',  action='store_true')
+    parser.add_argument('--skip_onnxslim',  action='store_true')
     parser.add_argument('--dynamic_batch',  action='store_true')
     parser.add_argument('--fp16', '-f', action='store_true')
     args = parser.parse_args()

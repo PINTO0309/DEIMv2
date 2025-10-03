@@ -925,15 +925,15 @@ def main():
         '-ost',
         '--object_socre_threshold',
         type=float,
-        default=0.45,
+        default=0.35,
         help=\
-            'The detection score threshold for object detection. Default: 0.45',
+            'The detection score threshold for object detection. Default: 0.35',
     )
     parser.add_argument(
         '-ast',
         '--attribute_socre_threshold',
         type=float,
-        default=0.75,
+        default=0.70,
         help=\
             'The attribute score threshold for object detection. Default: 0.70',
     )
@@ -941,9 +941,9 @@ def main():
         '-kst',
         '--keypoint_threshold',
         type=float,
-        default=0.45,
+        default=0.30,
         help=\
-            'The keypoint score threshold for object detection. Default: 0.45',
+            'The keypoint score threshold for object detection. Default: 0.30',
     )
     parser.add_argument(
         '-kdm',
