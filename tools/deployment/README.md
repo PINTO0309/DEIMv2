@@ -35,7 +35,8 @@ uv run python tools/deployment/export_onnx.py \
 -r ckpts/${WEIGHT}.pth \
 --opset 17 \
 --simplify \
---skip_onnxslim
+--skip_onnxslim \
+--size 320 320
 
 uv run onnxsim ${WEIGHT}_${QUERIES}query.onnx ${WEIGHT}_${QUERIES}query.onnx
 uv run onnxsim ${WEIGHT}_${QUERIES}query.onnx ${WEIGHT}_${QUERIES}query.onnx
@@ -46,7 +47,8 @@ uv run python tools/deployment/export_onnx.py \
 --opset 17 \
 --dynamic_batch \
 --simplify \
---skip_onnxslim
+--skip_onnxslim \
+--size 320 320
 
 uv run onnxsim ${WEIGHT}_${QUERIES}query_n_batch.onnx ${WEIGHT}_${QUERIES}query_n_batch.onnx
 uv run onnxsim ${WEIGHT}_${QUERIES}query_n_batch.onnx ${WEIGHT}_${QUERIES}query_n_batch.onnx
@@ -97,4 +99,31 @@ INFO: test_loop_count: 10
 INFO: total elapsed time:  90.57736396789551 ms
 INFO: avg elapsed time per pred:  9.05773639678955 ms
 INFO: output_name.1: label_xyxy_score shape: [1, 300, 6] dtype: float3
+```
+```bash
+uv run sit4onnx \
+-if deimv2_hgnetv2_atto_coco_100query_n_batch.onnx \
+-oep tensorrt \
+-b 1
+
+INFO: file: deimv2_hgnetv2_atto_coco_100query_n_batch.onnx
+INFO: providers: ['TensorrtExecutionProvider', 'CPUExecutionProvider']
+INFO: input_name.1: images shape: [1, 3, 320, 320] dtype: float32
+INFO: test_loop_count: 10
+INFO: total elapsed time:  9.71078872680664 ms
+INFO: avg elapsed time per pred:  0.9710788726806641 ms
+INFO: output_name.1: label_xyxy_score shape: [1, 300, 6] dtype: float32
+
+uv run sit4onnx \
+-if deimv2_hgnetv2_atto_coco_100query_n_batch.onnx \
+-oep tensorrt \
+-b 3
+
+INFO: file: deimv2_hgnetv2_atto_coco_100query_n_batch.onnx
+INFO: providers: ['TensorrtExecutionProvider', 'CPUExecutionProvider']
+INFO: input_name.1: images shape: [3, 3, 320, 320] dtype: float32
+INFO: test_loop_count: 10
+INFO: total elapsed time:  12.964248657226562 ms
+INFO: avg elapsed time per pred:  1.2964248657226562 ms
+INFO: output_name.1: label_xyxy_score shape: [3, 300, 6] dtype: float3
 ```
