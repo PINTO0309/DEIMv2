@@ -82,6 +82,7 @@ export PYTHONWARNINGS="ignore"
  
   
 ## 🚀 Updates
+- [x] **\[2025.10.2\]** [DEIMv2 has been integrated into X-AnyLabeling!](https://github.com/Intellindust-AI-Lab/DEIMv2/issues/25#issue-3473960491) Many thanks to the X-AnyLabeling maintainers for making this possible.
 - [x] **\[2025.9.26\]** Release DEIMv2 series.
 
 ## 🧭 Table of Content
