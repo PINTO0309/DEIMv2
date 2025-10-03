@@ -26,7 +26,7 @@ uv run python tools/deployment/export_onnx.py \
 uv run onnxslim ${WEIGHT}_${QUERIES}query_n_batch.onnx ${WEIGHT}_${QUERIES}query_n_batch.onnx
 uv run onnxsim ${WEIGHT}_${QUERIES}query_n_batch.onnx ${WEIGHT}_${QUERIES}query_n_batch.onnx
 
-### Atto
+### Atto - onnxslim is still buggy
 WEIGHT=deimv2_hgnetv2_atto_coco
 QUERIES=100
 
