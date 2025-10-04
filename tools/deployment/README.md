@@ -112,7 +112,7 @@ INFO: input_name.1: images shape: [1, 3, 320, 320] dtype: float32
 INFO: test_loop_count: 10
 INFO: total elapsed time:  9.71078872680664 ms
 INFO: avg elapsed time per pred:  0.9710788726806641 ms
-INFO: output_name.1: label_xyxy_score shape: [1, 300, 6] dtype: float32
+INFO: output_name.1: label_xyxy_score shape: [1, 100, 6] dtype: float32
 
 uv run sit4onnx \
 -if deimv2_hgnetv2_atto_coco_100query_n_batch.onnx \
@@ -125,7 +125,7 @@ INFO: input_name.1: images shape: [3, 3, 320, 320] dtype: float32
 INFO: test_loop_count: 10
 INFO: total elapsed time:  12.964248657226562 ms
 INFO: avg elapsed time per pred:  1.2964248657226562 ms
-INFO: output_name.1: label_xyxy_score shape: [3, 300, 6] dtype: float3
+INFO: output_name.1: label_xyxy_score shape: [3, 100, 6] dtype: float3
 
 uv run sit4onnx \
 -if deimv2_hgnetv2_atto_coco_100query_n_batch.onnx \
