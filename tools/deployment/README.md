@@ -8,24 +8,21 @@ WEIGHT=deimv2_dinov3_x_coco
 QUERIES=300
 
 uv run python tools/deployment/export_onnx.py \
--c configs/deimv2/${WEIGHT}.yml \
--r ckpts/${WEIGHT}.pth \
+-c configs/deimv2/deimv2_dinov3_x_wholebody34ft.yml \
+-r outputs/deimv2_dinov3_x_wholebody34ft_340/last.pth \
 --opset 17 \
---simplify \
---skip_onnxslim
+--simplify
 
-uv run onnxsim ${WEIGHT}_${QUERIES}query.onnx ${WEIGHT}_${QUERIES}query.onnx
 uv run onnxsim ${WEIGHT}_${QUERIES}query.onnx ${WEIGHT}_${QUERIES}query.onnx
 
 uv run python tools/deployment/export_onnx.py \
--c configs/deimv2/${WEIGHT}.yml \
--r ckpts/${WEIGHT}.pth \
+-c configs/deimv2/deimv2_dinov3_x_wholebody34ft.yml \
+-r outputs/deimv2_dinov3_x_wholebody34ft_340/last.pth \
 --opset 17 \
 --dynamic_batch \
---simplify \
---skip_onnxslim
+--simplify
 
-uv run onnxsim ${WEIGHT}_${QUERIES}query_n_batch.onnx ${WEIGHT}_${QUERIES}query_n_batch.onnx
+uv run onnxslim ${WEIGHT}_${QUERIES}query_n_batch.onnx ${WEIGHT}_${QUERIES}query_n_batch.onnx
 uv run onnxsim ${WEIGHT}_${QUERIES}query_n_batch.onnx ${WEIGHT}_${QUERIES}query_n_batch.onnx
 
 ### Atto - onnxslim is still buggy
