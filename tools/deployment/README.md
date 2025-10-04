@@ -13,8 +13,6 @@ uv run python tools/deployment/export_onnx.py \
 --opset 17 \
 --simplify
 
-uv run onnxsim ${WEIGHT}_${QUERIES}query.onnx ${WEIGHT}_${QUERIES}query.onnx
-
 uv run python tools/deployment/export_onnx.py \
 -c configs/deimv2/deimv2_dinov3_x_wholebody34ft.yml \
 -r outputs/deimv2_dinov3_x_wholebody34ft_340/last.pth \
