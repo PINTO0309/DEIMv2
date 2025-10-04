@@ -4,17 +4,17 @@
 cd ../..
 
 ### X
-WEIGHT=deimv2_dinov3_x_coco
-QUERIES=300
+WEIGHT=deimv2_dinov3_x_wholebody34ft
+QUERIES=340
 
 uv run python tools/deployment/export_onnx.py \
--c configs/deimv2/deimv2_dinov3_x_wholebody34ft.yml \
--r outputs/deimv2_dinov3_x_wholebody34ft_340/last.pth \
+-c configs/deimv2/${WEIGHT}.yml \
+-r outputs/${WEIGHT}_340/last.pth \
 --opset 17
 
 uv run python tools/deployment/export_onnx.py \
--c configs/deimv2/deimv2_dinov3_x_wholebody34ft.yml \
--r outputs/deimv2_dinov3_x_wholebody34ft_340/last.pth \
+-c configs/deimv2/${WEIGHT}.yml \
+-r outputs/${WEIGHT}_340/last.pth \
 --opset 17 \
 --dynamic_batch \
 --simplify
