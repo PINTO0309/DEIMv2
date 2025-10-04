@@ -4,21 +4,17 @@
 cd ../..
 
 ### X
-WEIGHT=deimv2_dinov3_x_coco
-QUERIES=300
+WEIGHT=deimv2_dinov3_x_wholebody34ft
+QUERIES=340
 
 uv run python tools/deployment/export_onnx.py \
 -c configs/deimv2/${WEIGHT}.yml \
--r ckpts/${WEIGHT}.pth \
---opset 17 \
---simplify
-
-uv run onnxslim ${WEIGHT}_${QUERIES}query.onnx ${WEIGHT}_${QUERIES}query.onnx
-uv run onnxsim ${WEIGHT}_${QUERIES}query.onnx ${WEIGHT}_${QUERIES}query.onnx
+-r outputs/${WEIGHT}_340/last.pth \
+--opset 17
 
 uv run python tools/deployment/export_onnx.py \
 -c configs/deimv2/${WEIGHT}.yml \
--r ckpts/${WEIGHT}.pth \
+-r outputs/${WEIGHT}_340/last.pth \
 --opset 17 \
 --dynamic_batch \
 --simplify
@@ -26,7 +22,7 @@ uv run python tools/deployment/export_onnx.py \
 uv run onnxslim ${WEIGHT}_${QUERIES}query_n_batch.onnx ${WEIGHT}_${QUERIES}query_n_batch.onnx
 uv run onnxsim ${WEIGHT}_${QUERIES}query_n_batch.onnx ${WEIGHT}_${QUERIES}query_n_batch.onnx
 
-### Atto - onnxslim is still buggy
+### Atto
 WEIGHT=deimv2_hgnetv2_atto_coco
 QUERIES=100
 
@@ -34,12 +30,7 @@ uv run python tools/deployment/export_onnx.py \
 -c configs/deimv2/${WEIGHT}.yml \
 -r ckpts/${WEIGHT}.pth \
 --opset 17 \
---simplify \
---skip_onnxslim \
 --size 320 320
-
-uv run onnxsim ${WEIGHT}_${QUERIES}query.onnx ${WEIGHT}_${QUERIES}query.onnx
-uv run onnxsim ${WEIGHT}_${QUERIES}query.onnx ${WEIGHT}_${QUERIES}query.onnx
 
 uv run python tools/deployment/export_onnx.py \
 -c configs/deimv2/${WEIGHT}.yml \
@@ -47,10 +38,9 @@ uv run python tools/deployment/export_onnx.py \
 --opset 17 \
 --dynamic_batch \
 --simplify \
---skip_onnxslim \
 --size 320 320
 
-uv run onnxsim ${WEIGHT}_${QUERIES}query_n_batch.onnx ${WEIGHT}_${QUERIES}query_n_batch.onnx
+uv run onnxslim ${WEIGHT}_${QUERIES}query_n_batch.onnx ${WEIGHT}_${QUERIES}query_n_batch.onnx
 uv run onnxsim ${WEIGHT}_${QUERIES}query_n_batch.onnx ${WEIGHT}_${QUERIES}query_n_batch.onnx
 ```
 
