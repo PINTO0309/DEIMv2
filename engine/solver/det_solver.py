@@ -309,8 +309,12 @@ class DetSolver(BaseSolver):
         max_id_digits = 3
         name_width = 25
         ap_width = 7
-        col_height = 20
-        num_cols = 3
+        max_rows_per_col = 20
+
+        total_classes = len(per_class)
+        # Adapt layout so long class lists spill into additional columns
+        num_cols = max(1, (total_classes + max_rows_per_col - 1) // max_rows_per_col)
+        col_height = max_rows_per_col
 
         def cell_text(idx: int, name: str, ap: float) -> str:
             name = name[:name_width] if name else ''
