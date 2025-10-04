@@ -10,8 +10,7 @@ QUERIES=300
 uv run python tools/deployment/export_onnx.py \
 -c configs/deimv2/deimv2_dinov3_x_wholebody34ft.yml \
 -r outputs/deimv2_dinov3_x_wholebody34ft_340/last.pth \
---opset 17 \
---simplify
+--opset 17
 
 uv run python tools/deployment/export_onnx.py \
 -c configs/deimv2/deimv2_dinov3_x_wholebody34ft.yml \
