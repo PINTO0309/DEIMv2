@@ -276,13 +276,67 @@ CUDA_VISIBLE_DEVICES=0 torchrun --master_port=7777 --nproc_per_node=1 train.py -
 ```
 
 <!-- <summary>2. Testing </summary> -->
-2. Testing
+2. Testing (Validation)
 ```shell
 # for ViT-based variants
 CUDA_VISIBLE_DEVICES=0,1,2,3 torchrun --master_port=7777 --nproc_per_node=4 train.py -c configs/deimv2/deimv2_dinov3_${model}_coco.yml --test-only -r model.pth
+CUDA_VISIBLE_DEVICES=0 torchrun --master_port=7777 --nproc_per_node=1 train.py -c configs/deimv2/deimv2_dinov3_x_wholebody34.yml --test-only -r outputs/deimv2_dinov3_x_wholebody34/best_stg2.pth
 
 # for HGNetv2-based variants
 CUDA_VISIBLE_DEVICES=0,1,2,3 torchrun --master_port=7777 --nproc_per_node=4 train.py -c configs/deimv2/deimv2_hgnetv2_${model}_coco.yml --test-only -r model.pth
+CUDA_VISIBLE_DEVICES=0 torchrun --master_port=7777 --nproc_per_node=1 train.py -c configs/deimv2/deimv2_hgnetv2_n_wholebody34.yml --test-only -r outputs/deimv2_hgnetv2_n_wholebody34/best_stg2.pth
+```
+```
+IoU metric: bbox
+ Average Precision  (AP) @[ IoU=0.50:0.95 | area=   all | maxDets=100 ] = 0.492
+ Average Precision  (AP) @[ IoU=0.50      | area=   all | maxDets=100 ] = 0.722
+ Average Precision  (AP) @[ IoU=0.75      | area=   all | maxDets=100 ] = 0.502
+ Average Precision  (AP) @[ IoU=0.50:0.95 | area= small | maxDets=100 ] = 0.311
+ Average Precision  (AP) @[ IoU=0.50:0.95 | area=medium | maxDets=100 ] = 0.709
+ Average Precision  (AP) @[ IoU=0.50:0.95 | area= large | maxDets=100 ] = 0.852
+ Average Recall     (AR) @[ IoU=0.50:0.95 | area=   all | maxDets=  1 ] = 0.276
+ Average Recall     (AR) @[ IoU=0.50:0.95 | area=   all | maxDets= 10 ] = 0.515
+ Average Recall     (AR) @[ IoU=0.50:0.95 | area=   all | maxDets=100 ] = 0.587
+ Average Recall     (AR) @[ IoU=0.50:0.95 | area= small | maxDets=100 ] = 0.453
+ Average Recall     (AR) @[ IoU=0.50:0.95 | area=medium | maxDets=100 ] = 0.786
+ Average Recall     (AR) @[ IoU=0.50:0.95 | area= large | maxDets=100 ] = 0.887
+ Average Recall     (AR) @[ IoU=0.50      | area=   all | maxDets=100 ] = 0.847
+ Average Recall     (AR) @[ IoU=0.75      | area=   all | maxDets=100 ] = 0.607
+┏━━━━━┳━━━━━━━━━━━━━━━━┳━━━━━━┳━━━━━━━━━━━━━━━━┳━━━━━━┓
+┃Epoch┃Avg. Precision  ┃     %╇Avg. Recall     ┃     %┃
+┡━━━━━╇━━━━━━━━━━━━━━━━╇━━━━━━╇━━━━━━━━━━━━━━━━╇━━━━━━┩
+│    6│AP @ .5:.95     │049.25╎AR maxDets   1  │027.62│
+│    6│AP @     .5     │072.24╎AR maxDets  10  │051.52│
+│    6│AP @    .75     │050.19╎AR maxDets 100  │058.74│
+│    6│AP  (small)     │031.07╎AR     (small)  │045.33│
+│    6│AP (medium)     │070.85╎AR    (medium)  │078.59│
+│    6│AP  (large)     │085.22╎AR     (large)  │088.68│
+└─────┴────────────────┴──────┴────────────────┴──────┘
+Per-class mAP:
+┏━━━┳━━━━━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━┳━━━┳━━━━━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━┓
+┃ ID┃Name                     ┃     AP┃ ID┃Name                     ┃     AP┃
+┡━━━╇━━━━━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━╇━━━╇━━━━━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━┩
+│  0│body                     │ 0.6807│ 20│ear                      │ 0.3870│
+│  1│adult                    │ 0.7120│ 21│collarbone               │ 0.1949│
+│  2│child                    │ 0.7392│ 22│shoulder                 │ 0.2649│
+│  3│male                     │ 0.7022│ 23│solar_plexus             │ 0.1841│
+│  4│female                   │ 0.6870│ 24│elbow                    │ 0.2495│
+│  5│body_with_wheelchair     │ 0.9057│ 25│wrist                    │ 0.2423│
+│  6│body_with_crutches       │ 0.9409│ 26│hand                     │ 0.5694│
+│  7│head                     │ 0.6505│ 27│hand_left                │ 0.5551│
+│  8│front                    │ 0.5499│ 28│hand_right               │ 0.5533│
+│  9│right-front              │ 0.5571│ 29│abdomen                  │ 0.2945│
+│ 10│right-side               │ 0.5765│ 30│hip_joint                │ 0.2362│
+│ 11│right-back               │ 0.5437│ 31│knee                     │ 0.2788│
+│ 12│back                     │ 0.4121│ 32│ankle                    │ 0.2794│
+│ 13│left-back                │ 0.5070│ 33│foot                     │ 0.4797│
+│ 14│left-side                │ 0.5737│   │                         │       │
+│ 15│left-front               │ 0.5288│   │                         │       │
+│ 16│face                     │ 0.6249│   │                         │       │
+│ 17│eye                      │ 0.3340│   │                         │       │
+│ 18│nose                     │ 0.4026│   │                         │       │
+│ 19│mouth                    │ 0.3467│   │                         │       │
+└───┴─────────────────────────┴───────┴───┴─────────────────────────┴───────┘
 ```
 
 <!-- <summary>3. Tuning </summary> -->
