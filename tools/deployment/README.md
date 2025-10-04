@@ -138,5 +138,5 @@ INFO: input_name.1: images shape: [1, 3, 320, 320] dtype: float32
 INFO: test_loop_count: 10
 INFO: total elapsed time:  71.84863090515137 ms
 INFO: avg elapsed time per pred:  7.184863090515137 ms
-INFO: output_name.1: label_xyxy_score shape: [1, 300, 6] dtype: float32
+INFO: output_name.1: label_xyxy_score shape: [1, 100, 6] dtype: float32
 ```
