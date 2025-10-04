@@ -53,11 +53,11 @@ PostProcessor:
   num_top_queries: 340
 
 # Increase to search for the optimal ema
-epoches: 500 # 468 + 32
+epoches: 100 # 468 + 32
 
 ## Our LR-Scheduler
 warmup_iter: 4000
-flat_epoch: 250    # 4 + epoch // 2, e.g., 40 = 4 + 72 / 2
+flat_epoch: 40    # 4 + epoch // 2, e.g., 40 = 4 + 72 / 2
 no_aug_epoch: 32
 lr_gamma: 0.5
 
@@ -111,7 +111,7 @@ train_dataloader:
         # no_aug_end ≤ epoch < mosaic_end: apply listed ops, but Mosaic only fires with mosaic_prob and RandomZoomOut / RandomIoUCrop are suppressed when Mosaic already ran.
         # mosaic_end ≤ epoch < full_stop: listed ops run every time (no Mosaic special-casing).
         # epoch ≥ full_stop: listed ops are skipped again for the final no‑augmentation phase.
-        epoch: [4, 250, 400]   # list
+        epoch: [4, 40, 80]   # list
         ops: ['Mosaic', 'RandomPhotometricDistort', 'RandomZoomOut', 'RandomIoUCrop']
       mosaic_prob: -0.1
   total_batch_size: 4 # total batch size equals to 32 (4 GPUs * 8 batch)
@@ -144,4 +144,4 @@ DEIMCriterion:
   use_uni_set: False
 
   matcher:
-    matcher_change_epoch: 450   # FIX This
+    matcher_change_epoch: 80   # FIX This
