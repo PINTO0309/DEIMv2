@@ -49,6 +49,9 @@ DEIMTransformer:
   share_bbox_head: True
   use_gateway: False
 
+PostProcessor:
+  num_top_queries: 150
+
 # Increase to search for the optimal ema
 epoches: 500 # 468 + 32
 
@@ -79,7 +82,7 @@ optimizer:
 eval_spatial_size: [416, 416]
 train_dataloader:
   total_batch_size: 128
-  dataset: 
+  dataset:
     transforms:
       ops:
         - {type: Mosaic, output_size: 208, rotation_range: 10, translation_range: [0.1, 0.1], scaling_range: [0.5, 1.5],
@@ -94,7 +97,7 @@ train_dataloader:
         - {type: ConvertPILImage, dtype: 'float32', scale: True}
         - {type: ConvertBoxes, fmt: 'cxcywh', normalize: True}
       policy:
-        epoch: [4, 250, 400]   # list 
+        epoch: [4, 250, 400]   # list
         ops: ['Mosaic', 'RandomPhotometricDistort', 'RandomZoomOut', 'RandomIoUCrop']
       mosaic_prob: 0.5
 
