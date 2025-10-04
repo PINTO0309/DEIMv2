@@ -39,9 +39,13 @@ DEIMTransformer:
 
   num_layers: 3
   eval_idx: -1
+  num_queries: 300
 
   # FFN
   dim_feedforward: 512
+
+PostProcessor:
+  num_top_queries: 300
 
 optimizer:
   type: AdamW
@@ -70,11 +74,11 @@ no_aug_epoch: 12
 lr_gamma: 1.0
 
 ## Our DataAug
-train_dataloader: 
-  dataset: 
+train_dataloader:
+  dataset:
     transforms:
       policy:
-        epoch: [4, 78, 148]   # list 
+        epoch: [4, 78, 148]   # list
 
   collate_fn:
     ema_restart_decay: 0.9999

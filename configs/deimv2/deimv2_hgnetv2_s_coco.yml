@@ -26,14 +26,18 @@ HybridEncoder:
 DEIMTransformer:
   num_layers: 3  # 4 5 6
   eval_idx: -1  # -2 -3 -4
+  num_queries: 300
+
+PostProcessor:
+  num_top_queries: 300
 
 optimizer:
   type: AdamW
-  params: 
-    - 
+  params:
+    -
       params: '^(?=.*backbone)(?!.*bn).*$'
       lr: 0.0002
-    - 
+    -
       params: '^(?=.*(?:norm|bn)).*$'     # except bias
       weight_decay: 0.
 
@@ -49,11 +53,11 @@ flat_epoch: 64    # 4 + epoch // 2, e.g., 40 = 4 + 72 / 2
 no_aug_epoch: 12
 
 ## Our DataAug
-train_dataloader: 
-  dataset: 
+train_dataloader:
+  dataset:
     transforms:
       policy:
-        epoch: [4, 64, 120]   # list 
+        epoch: [4, 64, 120]   # list
 
   collate_fn:
     ema_restart_decay: 0.9999
