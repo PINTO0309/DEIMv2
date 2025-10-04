@@ -30,7 +30,6 @@ uv run python tools/deployment/export_onnx.py \
 -c configs/deimv2/${WEIGHT}.yml \
 -r ckpts/${WEIGHT}.pth \
 --opset 17 \
---simplify
 --size 320 320
 
 uv run python tools/deployment/export_onnx.py \
@@ -38,7 +37,7 @@ uv run python tools/deployment/export_onnx.py \
 -r ckpts/${WEIGHT}.pth \
 --opset 17 \
 --dynamic_batch \
---simplify
+--simplify \
 --size 320 320
 
 uv run onnxslim ${WEIGHT}_${QUERIES}query_n_batch.onnx ${WEIGHT}_${QUERIES}query_n_batch.onnx
