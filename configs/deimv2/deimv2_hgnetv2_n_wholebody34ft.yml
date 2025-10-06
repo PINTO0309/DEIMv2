@@ -108,7 +108,7 @@ train_dataloader:
         epoch: [4, 14, 20]   # list
         ops: ['Mosaic', 'RandomPhotometricDistort', 'RandomZoomOut', 'RandomIoUCrop']
       mosaic_prob: -0.1
-  total_batch_size: 4 # total batch size equals to 32 (4 GPUs * 8 batch)
+  total_batch_size: 6 # total batch size equals to 32 (4 GPUs * 8 batch)
   num_workers: 4
 
   collate_fn:
