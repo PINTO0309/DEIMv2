@@ -109,7 +109,7 @@ train_dataloader:
         ops: ['Mosaic', 'RandomPhotometricDistort', 'RandomZoomOut', 'RandomIoUCrop']
       mosaic_prob: -0.1
   total_batch_size: 6 # total batch size equals to 32 (4 GPUs * 8 batch)
-  num_workers: 4
+  num_workers: 6
 
   collate_fn:
     ema_restart_decay: 0.9999
