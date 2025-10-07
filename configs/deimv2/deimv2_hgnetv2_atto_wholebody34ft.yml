@@ -109,8 +109,8 @@ train_dataloader:
         # epoch ≥ full_stop: listed ops are skipped again for the final no‑augmentation phase.
         epoch: [4, 14, 20]   # list
       mosaic_prob: -0.1
-  total_batch_size: 6 # total batch size equals to 32 (4 GPUs * 8 batch)
-  num_workers: 6
+  total_batch_size: 8 # total batch size equals to 32 (4 GPUs * 8 batch)
+  num_workers: 8
 
   collate_fn:
     mixup_prob: 0.0
@@ -131,7 +131,7 @@ val_dataloader:
         - {type: ConvertPILImage, dtype: 'float32', scale: True}
   shuffle: False
   total_batch_size: 16 # total batch size equals to 64 (4 GPUs * 16 batch)
-  num_workers: 4
+  num_workers: 16
 
 
 DEIMCriterion:

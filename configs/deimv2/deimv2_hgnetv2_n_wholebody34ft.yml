@@ -131,7 +131,7 @@ val_dataloader:
         - {type: Resize, size: [640, 640], }
         - {type: ConvertPILImage, dtype: 'float32', scale: True}
   total_batch_size: 16 # total batch size equals to 64 (4 GPUs * 16 batch)
-  num_workers: 4
+  num_workers: 16
 
 DEIMCriterion:
   matcher:
