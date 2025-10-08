@@ -254,3 +254,8 @@ INFO: total elapsed time:  71.84863090515137 ms
 INFO: avg elapsed time per pred:  7.184863090515137 ms
 INFO: output_name.1: label_xyxy_score shape: [1, 100, 6] dtype: float32
 ```
+# LiteRT (TFLite)
+```bash
+uv run onnx2tf -i ${WEIGHT}_${QUERIES}query.onnx
+```
+<img width="775" height="699" alt="image" src="https://github.com/user-attachments/assets/c5283843-7989-45cd-9ccf-e772b5f9207c" />
