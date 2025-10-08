@@ -84,6 +84,35 @@ uv run onnxsim ${WEIGHT}_${QUERIES}query_n_batch.onnx ${WEIGHT}_${QUERIES}query.
 
 uv run python tools/deployment/make_prep.py -m ${WEIGHT}_${QUERIES}query.onnx -s 1 3 ${H} ${W}
 
+################################################## Pico
+WEIGHT=deimv2_hgnetv2_pico_wholebody34
+H=640
+W=640
+QUERIES=340
+
+uv run python tools/deployment/export_onnx.py \
+-c configs/deimv2/${WEIGHT}.yml \
+-r ckpts/${WEIGHT}.pth \
+--opset 17 \
+--size ${H} ${W}
+
+uv run python tools/deployment/export_onnx.py \
+-c configs/deimv2/${WEIGHT}.yml \
+-r ckpts/${WEIGHT}.pth \
+--opset 17 \
+--dynamic_batch \
+--simplify \
+--size ${H} ${W}
+uv run onnxslim ${WEIGHT}_${QUERIES}query_n_batch.onnx ${WEIGHT}_${QUERIES}query_n_batch.onnx
+uv run onnxsim ${WEIGHT}_${QUERIES}query_n_batch.onnx ${WEIGHT}_${QUERIES}query_n_batch.onnx
+
+rm ${WEIGHT}_${QUERIES}query.onnx
+
+uv run onnxsim ${WEIGHT}_${QUERIES}query_n_batch.onnx ${WEIGHT}_${QUERIES}query.onnx \
+--overwrite-input-shape "images:1,3,${H},${W}"
+
+uv run python tools/deployment/make_prep.py -m ${WEIGHT}_${QUERIES}query.onnx -s 1 3 ${H} ${W}
+
 ################################################## Femto
 WEIGHT=deimv2_hgnetv2_femto_wholebody34
 H=416
