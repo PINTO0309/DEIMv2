@@ -22,26 +22,30 @@ uv run python tools/deployment/export_onnx.py \
 uv run onnxslim ${WEIGHT}_${QUERIES}query_n_batch.onnx ${WEIGHT}_${QUERIES}query_n_batch.onnx
 uv run onnxsim ${WEIGHT}_${QUERIES}query_n_batch.onnx ${WEIGHT}_${QUERIES}query_n_batch.onnx
 
-### Atto
-WEIGHT=deimv2_hgnetv2_atto_coco
-QUERIES=100
+### S
+WEIGHT=deimv2_dinov3_s_wholebody34ft
+H=640
+W=640
+QUERIES=1750
 
 uv run python tools/deployment/export_onnx.py \
 -c configs/deimv2/${WEIGHT}.yml \
 -r ckpts/${WEIGHT}.pth \
---opset 17 \
---size 320 320
+--opset 17
 
 uv run python tools/deployment/export_onnx.py \
 -c configs/deimv2/${WEIGHT}.yml \
 -r ckpts/${WEIGHT}.pth \
 --opset 17 \
 --dynamic_batch \
---simplify \
---size 320 320
-
+--simplify
 uv run onnxslim ${WEIGHT}_${QUERIES}query_n_batch.onnx ${WEIGHT}_${QUERIES}query_n_batch.onnx
 uv run onnxsim ${WEIGHT}_${QUERIES}query_n_batch.onnx ${WEIGHT}_${QUERIES}query_n_batch.onnx
+
+rm ${WEIGHT}_${QUERIES}query.onnx
+
+uv run onnxsim ${WEIGHT}_${QUERIES}query_n_batch.onnx ${WEIGHT}_${QUERIES}query.onnx \
+--overwrite-input-shape "images:1,3,${H},${W}"
 ```
 
 ```bash
