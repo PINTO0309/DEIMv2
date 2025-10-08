@@ -202,7 +202,7 @@ requires-dist = [
     { name = "pyyaml", specifier = "==6.0.3" },
     { name = "scipy", specifier = "==1.16.2" },
     { name = "sit4onnx", specifier = "==1.0.10" },
-    { name = "snc4onnx", specifier = "==1.0.13" },
+    { name = "snc4onnx", specifier = "==1.0.14" },
     { name = "sor4onnx", specifier = "==1.0.7" },
     { name = "tensorboard", specifier = "==2.20.0" },
     { name = "torch", specifier = "==2.5.1" },
@@ -1102,11 +1102,11 @@ wheels = [
 
 [[package]]
 name = "snc4onnx"
-version = "1.0.13"
+version = "1.0.14"
 source = { registry = "https://pypi.org/simple" }
-sdist = { url = "https://files.pythonhosted.org/packages/0e/50/31ebb0dbed548f3fc5970b5a57d3bfceef67b3a8d410a019be259248dac0/snc4onnx-1.0.13.tar.gz", hash = "sha256:ec1b4d2feee4f44131af29b2589dac51c8b521964538a6ddcc5fb9e777c9e602", size = 12082, upload-time = "2024-04-30T05:45:46.375Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/39/f8/b94783a7c74aa661c1dd6af7c0aacf1563014e9cb6b6b188f70e5d8acfbb/snc4onnx-1.0.14.tar.gz", hash = "sha256:d0220315fa14f1fcdcd22ee0b91dd5e306b67b5a1c9e14912ea82e6b9cb6d5a7", size = 12217, upload-time = "2025-10-08T02:04:23.92Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/73/57/cf831fe44e0de2e7f7890f5d8c4d6a669fc5da73ce7d4d58b99cd35e9ecb/snc4onnx-1.0.13-py3-none-any.whl", hash = "sha256:924f4ee8d3dc6294612a3a1b4bf610d9425ebf24be5792e8a82fdb19acc1da91", size = 10895, upload-time = "2024-04-30T05:45:44.806Z" },
+    { url = "https://files.pythonhosted.org/packages/d3/63/006ba35e361ab69eb6c097c6cade6dc83e603ed7bf32ceaf23ef5b30e315/snc4onnx-1.0.14-py3-none-any.whl", hash = "sha256:0eb733b2f317636f8d5712ce369b6963d1f52f0f7e7f026fb3ca4c2abd960a9b", size = 11009, upload-time = "2025-10-08T02:04:22.781Z" },
 ]
 
 [[package]]

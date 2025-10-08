@@ -1,9 +1,13 @@
 #! /usr/bin/env python
-
+import warnings
+warnings.filterwarnings("ignore")
 import torch
 import torch.nn as nn
 import onnx
 from onnxsim import simplify
+import os
+from snc4onnx import combine
+from sor4onnx import rename
 from argparse import ArgumentParser
 from typing import List
 import os
@@ -69,13 +73,13 @@ if __name__ == "__main__":
 
     model = Model(input_shape=INPUT_SHAPE, is_dinov3=is_dinov3)
 
-    onnx_file = f"{MODEL}_{'_'.join(map(str, INPUT_SHAPE))}.onnx"
+    onnx_file1 = f"{MODEL}_{'_'.join(map(str, INPUT_SHAPE))}.onnx"
     x = torch.randn(INPUT_SHAPE)
 
     torch.onnx.export(
         model,
         args=(x),
-        f=onnx_file,
+        f=onnx_file1,
         opset_version=OPSET,
         input_names = ['input_bgr'],
         output_names=['output_prep'],
@@ -87,17 +91,25 @@ if __name__ == "__main__":
                 },
             }
     )
-    model_onnx1 = onnx.load(onnx_file)
+    model_onnx1 = onnx.load(onnx_file1)
     model_onnx1 = onnx.shape_inference.infer_shapes(model_onnx1)
-    onnx.save(model_onnx1, onnx_file)
-    model_onnx2 = onnx.load(onnx_file)
-    model_simp, check = simplify(model_onnx2)
-    onnx.save(model_simp, onnx_file)
+    onnx.save(model_onnx1, onnx_file1)
+    model_onnx2 = onnx.load(onnx_file1)
+    model_simp1, check = simplify(model_onnx2)
+    onnx.save(model_simp1, onnx_file1)
 
+    rename(
+        old_new=["/", "prep/"],
+        input_onnx_file_path=onnx_file1,
+        search_mode="prefix_match",
+        output_onnx_file_path=onnx_file1,
+    )
+
+    onnx_file2 = f"{MODEL}_{'_'.join(map(str, INPUT_SHAPE))}_n_batch.onnx"
     torch.onnx.export(
         model,
         args=(x),
-        f=f"{MODEL}_{'_'.join(map(str, INPUT_SHAPE))}_n_batch.onnx",
+        f=onnx_file2,
         opset_version=OPSET,
         input_names = ['input_bgr'],
         output_names=['output_prep'],
@@ -110,27 +122,25 @@ if __name__ == "__main__":
                 },
             }
     )
-    model_onnx1 = onnx.load(onnx_file)
-    model_onnx1 = onnx.shape_inference.infer_shapes(model_onnx1)
-    onnx.save(model_onnx1, onnx_file)
-    model_onnx2 = onnx.load(onnx_file)
-    model_simp, check = simplify(model_onnx2)
-    onnx.save(model_simp, onnx_file)
+    model_onnx3 = onnx.load(onnx_file2)
+    model_onnx3 = onnx.shape_inference.infer_shapes(model_onnx3)
+    onnx.save(model_onnx3, onnx_file2)
+    model_onnx3 = onnx.load(onnx_file2)
+    model_simp2, check = simplify(model_onnx3)
+    onnx.save(model_simp2, onnx_file2)
 
-    from sor4onnx import rename
     rename(
         old_new=["/", "prep/"],
-        input_onnx_file_path=onnx_file,
+        input_onnx_file_path=onnx_file2,
         search_mode="prefix_match",
-        output_onnx_file_path=onnx_file,
+        output_onnx_file_path=onnx_file2,
     )
 
-    import os
-    from snc4onnx import combine
-
+    print(f'onnx_file: {onnx_file1}')
+    print(f'MODEL_BODY: {MODEL_BODY}')
     combine(
         input_onnx_file_paths = [
-            onnx_file,
+            onnx_file1,
             MODEL_BODY,
         ],
         srcop_destop = [
@@ -140,7 +150,7 @@ if __name__ == "__main__":
     )
     combine(
         input_onnx_file_paths = [
-            f'{os.path.splitext(os.path.basename(onnx_file))[0]}_n_batch.onnx',
+            onnx_file2,
             f'{os.path.splitext(os.path.basename(MODEL_BODY))[0]}_n_batch.onnx',
         ],
         srcop_destop = [

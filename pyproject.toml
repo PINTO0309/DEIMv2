@@ -19,7 +19,7 @@ dependencies = [
     "pyyaml==6.0.3",
     "scipy==1.16.2",
     "sit4onnx==1.0.10",
-    "snc4onnx==1.0.13",
+    "snc4onnx==1.0.14",
     "sor4onnx==1.0.7",
     "tensorboard==2.20.0",
     "torch==2.5.1",
