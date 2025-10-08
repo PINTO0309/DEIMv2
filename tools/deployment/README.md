@@ -85,7 +85,7 @@ uv run onnxsim ${WEIGHT}_${QUERIES}query_n_batch.onnx ${WEIGHT}_${QUERIES}query.
 uv run python tools/deployment/make_prep.py -m ${WEIGHT}_${QUERIES}query.onnx -s 1 3 ${H} ${W}
 
 ################################################## Femto
-WEIGHT=deimv2_hgnetv2_atto_wholebody34
+WEIGHT=deimv2_hgnetv2_femto_wholebody34
 H=416
 W=416
 QUERIES=340
