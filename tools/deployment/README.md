@@ -3,7 +3,7 @@
 ```bash
 cd ../..
 
-### X
+################################################## X
 WEIGHT=deimv2_dinov3_x_wholebody34ft
 QUERIES=340
 
@@ -22,7 +22,7 @@ uv run python tools/deployment/export_onnx.py \
 uv run onnxslim ${WEIGHT}_${QUERIES}query_n_batch.onnx ${WEIGHT}_${QUERIES}query_n_batch.onnx
 uv run onnxsim ${WEIGHT}_${QUERIES}query_n_batch.onnx ${WEIGHT}_${QUERIES}query_n_batch.onnx
 
-### S
+################################################## S
 WEIGHT=deimv2_dinov3_s_wholebody34ft
 H=640
 W=640
@@ -47,7 +47,7 @@ rm ${WEIGHT}_${QUERIES}query.onnx
 uv run onnxsim ${WEIGHT}_${QUERIES}query_n_batch.onnx ${WEIGHT}_${QUERIES}query.onnx \
 --overwrite-input-shape "images:1,3,${H},${W}"
 
-### N
+################################################## N
 WEIGHT=deimv2_hgnetv2_n_wholebody34
 H=640
 W=640
