@@ -46,6 +46,31 @@ rm ${WEIGHT}_${QUERIES}query.onnx
 
 uv run onnxsim ${WEIGHT}_${QUERIES}query_n_batch.onnx ${WEIGHT}_${QUERIES}query.onnx \
 --overwrite-input-shape "images:1,3,${H},${W}"
+
+### N
+WEIGHT=deimv2_hgnetv2_n_wholebody34
+H=640
+W=640
+QUERIES=680
+
+uv run python tools/deployment/export_onnx.py \
+-c configs/deimv2/${WEIGHT}.yml \
+-r ckpts/${WEIGHT}.pth \
+--opset 17
+
+uv run python tools/deployment/export_onnx.py \
+-c configs/deimv2/${WEIGHT}.yml \
+-r ckpts/${WEIGHT}.pth \
+--opset 17 \
+--dynamic_batch \
+--simplify
+uv run onnxslim ${WEIGHT}_${QUERIES}query_n_batch.onnx ${WEIGHT}_${QUERIES}query_n_batch.onnx
+uv run onnxsim ${WEIGHT}_${QUERIES}query_n_batch.onnx ${WEIGHT}_${QUERIES}query_n_batch.onnx
+
+rm ${WEIGHT}_${QUERIES}query.onnx
+
+uv run onnxsim ${WEIGHT}_${QUERIES}query_n_batch.onnx ${WEIGHT}_${QUERIES}query.onnx \
+--overwrite-input-shape "images:1,3,${H},${W}"
 ```
 
 ```bash
