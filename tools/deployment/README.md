@@ -4,23 +4,31 @@
 cd ../..
 
 ################################################## X
-WEIGHT=deimv2_dinov3_x_wholebody34ft
-QUERIES=340
+WEIGHT=deimv2_dinov3_x_wholebody34
+H=640
+W=640
+QUERIES=1750
 
 uv run python tools/deployment/export_onnx.py \
 -c configs/deimv2/${WEIGHT}.yml \
--r outputs/${WEIGHT}_340/last.pth \
+-r ckpts/${WEIGHT}.pth \
 --opset 17
 
 uv run python tools/deployment/export_onnx.py \
 -c configs/deimv2/${WEIGHT}.yml \
--r outputs/${WEIGHT}_340/last.pth \
+-r ckpts/${WEIGHT}.pth \
 --opset 17 \
 --dynamic_batch \
 --simplify
-
 uv run onnxslim ${WEIGHT}_${QUERIES}query_n_batch.onnx ${WEIGHT}_${QUERIES}query_n_batch.onnx
 uv run onnxsim ${WEIGHT}_${QUERIES}query_n_batch.onnx ${WEIGHT}_${QUERIES}query_n_batch.onnx
+
+rm ${WEIGHT}_${QUERIES}query.onnx
+
+uv run onnxsim ${WEIGHT}_${QUERIES}query_n_batch.onnx ${WEIGHT}_${QUERIES}query.onnx \
+--overwrite-input-shape "images:1,3,${H},${W}"
+
+uv run python tools/deployment/make_prep.py -m ${WEIGHT}_${QUERIES}query.onnx -s 1 3 ${H} ${W}
 
 ################################################## S
 WEIGHT=deimv2_dinov3_s_wholebody34ft
@@ -47,6 +55,8 @@ rm ${WEIGHT}_${QUERIES}query.onnx
 uv run onnxsim ${WEIGHT}_${QUERIES}query_n_batch.onnx ${WEIGHT}_${QUERIES}query.onnx \
 --overwrite-input-shape "images:1,3,${H},${W}"
 
+uv run python tools/deployment/make_prep.py -m ${WEIGHT}_${QUERIES}query.onnx -s 1 3 ${H} ${W}
+
 ################################################## N
 WEIGHT=deimv2_hgnetv2_n_wholebody34
 H=640
@@ -71,10 +81,66 @@ rm ${WEIGHT}_${QUERIES}query.onnx
 
 uv run onnxsim ${WEIGHT}_${QUERIES}query_n_batch.onnx ${WEIGHT}_${QUERIES}query.onnx \
 --overwrite-input-shape "images:1,3,${H},${W}"
-```
 
-```bash
-uv run python tools/deployment/make_prep.py -m ${WEIGHT}_${QUERIES}query.onnx
+uv run python tools/deployment/make_prep.py -m ${WEIGHT}_${QUERIES}query.onnx -s 1 3 ${H} ${W}
+
+################################################## Femto
+WEIGHT=deimv2_hgnetv2_atto_wholebody34
+H=416
+W=416
+QUERIES=340
+
+uv run python tools/deployment/export_onnx.py \
+-c configs/deimv2/${WEIGHT}.yml \
+-r ckpts/${WEIGHT}.pth \
+--opset 17 \
+--size ${H} ${W}
+
+uv run python tools/deployment/export_onnx.py \
+-c configs/deimv2/${WEIGHT}.yml \
+-r ckpts/${WEIGHT}.pth \
+--opset 17 \
+--dynamic_batch \
+--simplify \
+--size ${H} ${W}
+uv run onnxslim ${WEIGHT}_${QUERIES}query_n_batch.onnx ${WEIGHT}_${QUERIES}query_n_batch.onnx
+uv run onnxsim ${WEIGHT}_${QUERIES}query_n_batch.onnx ${WEIGHT}_${QUERIES}query_n_batch.onnx
+
+rm ${WEIGHT}_${QUERIES}query.onnx
+
+uv run onnxsim ${WEIGHT}_${QUERIES}query_n_batch.onnx ${WEIGHT}_${QUERIES}query.onnx \
+--overwrite-input-shape "images:1,3,${H},${W}"
+
+uv run python tools/deployment/make_prep.py -m ${WEIGHT}_${QUERIES}query.onnx -s 1 3 ${H} ${W}
+
+################################################## Atto
+WEIGHT=deimv2_hgnetv2_atto_wholebody34
+H=320
+W=320
+QUERIES=340
+
+uv run python tools/deployment/export_onnx.py \
+-c configs/deimv2/${WEIGHT}.yml \
+-r ckpts/${WEIGHT}.pth \
+--opset 17 \
+--size ${H} ${W}
+
+uv run python tools/deployment/export_onnx.py \
+-c configs/deimv2/${WEIGHT}.yml \
+-r ckpts/${WEIGHT}.pth \
+--opset 17 \
+--dynamic_batch \
+--simplify \
+--size ${H} ${W}
+uv run onnxslim ${WEIGHT}_${QUERIES}query_n_batch.onnx ${WEIGHT}_${QUERIES}query_n_batch.onnx
+uv run onnxsim ${WEIGHT}_${QUERIES}query_n_batch.onnx ${WEIGHT}_${QUERIES}query_n_batch.onnx
+
+rm ${WEIGHT}_${QUERIES}query.onnx
+
+uv run onnxsim ${WEIGHT}_${QUERIES}query_n_batch.onnx ${WEIGHT}_${QUERIES}query.onnx \
+--overwrite-input-shape "images:1,3,${H},${W}"
+
+uv run python tools/deployment/make_prep.py -m ${WEIGHT}_${QUERIES}query.onnx -s 1 3 ${H} ${W}
 ```
 
 <img width="808" height="704" alt="image" src="https://github.com/user-attachments/assets/82606a50-c294-43f2-b617-a653a6ba5424" />
