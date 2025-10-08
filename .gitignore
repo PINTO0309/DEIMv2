@@ -150,4 +150,5 @@ tools/dataset/wholebody*
 outputs*.tar.gz
 images*/
 output*/
+saved_model*/
 *.mp4

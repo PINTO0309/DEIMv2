@@ -12,6 +12,7 @@ dependencies = [
     "numpy==1.26.4",
     "onnx==1.19.0",
     "onnx-graphsurgeon==0.5.8",
+    "onnx2tf==1.28.2",
     "onnxruntime-gpu==1.23.0",
     "onnxsim==0.4.30",
     "onnxslim==0.1.69",

@@ -171,6 +171,7 @@ dependencies = [
     { name = "numpy" },
     { name = "onnx" },
     { name = "onnx-graphsurgeon" },
+    { name = "onnx2tf" },
     { name = "onnxruntime-gpu" },
     { name = "onnxsim" },
     { name = "onnxslim" },
@@ -195,6 +196,7 @@ requires-dist = [
     { name = "numpy", specifier = "==1.26.4" },
     { name = "onnx", specifier = "==1.19.0" },
     { name = "onnx-graphsurgeon", specifier = "==0.5.8" },
+    { name = "onnx2tf", specifier = "==1.28.2" },
     { name = "onnxruntime-gpu", specifier = "==1.23.0" },
     { name = "onnxsim", specifier = "==0.4.30" },
     { name = "onnxslim", specifier = "==0.1.69" },
@@ -717,6 +719,15 @@ dependencies = [
 ]
 wheels = [
     { url = "https://files.pythonhosted.org/packages/71/53/98334c4f64a9e289a8cb48f5e7966b8ff015414d0bf26587cf46d764f1d8/onnx_graphsurgeon-0.5.8-py2.py3-none-any.whl", hash = "sha256:6f611ea29a8e4740fbab1aae52bf4c40b8b9918f8459058d20b99acc79fce121", size = 57923, upload-time = "2025-04-10T18:49:24.483Z" },
+]
+
+[[package]]
+name = "onnx2tf"
+version = "1.28.2"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/b6/73/52b0e6b6d948358608fd91693fc318fd3767140f63d6eaaf94a1be0cb95e/onnx2tf-1.28.2.tar.gz", hash = "sha256:e116e776029ea46db1fb65ae05f71ee828fa7d62aeb17bbfbc33350a2da6dc74", size = 360425, upload-time = "2025-07-22T13:20:00.138Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/3d/6d/3f8c0823bdb9a5f00d91741796fedeccf5bcdea0ad6802e615052fe916c2/onnx2tf-1.28.2-py3-none-any.whl", hash = "sha256:83133f7b5b8ca2d2b03953e90affdc1239d598e592bd8ee65c6c613a03fc28a7", size = 468297, upload-time = "2025-07-22T13:19:57.818Z" },
 ]
 
 [[package]]
