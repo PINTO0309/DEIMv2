@@ -6,7 +6,7 @@
 |deimv2_dinov3_x_coco.pth -> onnx|If re-trained by this fork|
 |:-:|:-:|
 |<img width="480" height="360" alt="image" src="https://github.com/user-attachments/assets/a125ba79-e592-4be6-b8c2-914331b7d167" />|<img width="480" height="360" alt="image" src="https://github.com/user-attachments/assets/f5e60ec3-d792-419e-b126-a1ca99988662" />|
-|![000000005673](https://github.com/user-attachments/assets/39bc9472-e264-4821-a2fa-ff83df120ae5)|![000000005673](https://github.com/user-attachments/assets/1f8d13a4-7eb5-4de4-bbaf-f55af4fb8200)|
+|![000000009420](https://github.com/user-attachments/assets/229df7e8-d86e-4e8c-a05c-442a9e4aa501)|![000000009420](https://github.com/user-attachments/assets/a1abdb8f-66c3-45f2-8c6a-95a725ca496f)|
 
 ```bash
 cd ../..
