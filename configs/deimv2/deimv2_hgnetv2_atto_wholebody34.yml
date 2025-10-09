@@ -109,8 +109,8 @@ train_dataloader:
         # epoch ≥ full_stop: listed ops are skipped again for the final no‑augmentation phase.
         epoch: [4, 250, 400]   # list
       mosaic_prob: -0.1
-  total_batch_size: 8 # total batch size equals to 32 (4 GPUs * 8 batch)
-  num_workers: 8
+  total_batch_size: 7 # total batch size equals to 32 (4 GPUs * 8 batch)
+  num_workers: 7
 
   collate_fn:
     mixup_prob: 0.0
