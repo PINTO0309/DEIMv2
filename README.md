@@ -13,6 +13,10 @@ source .venv/bin/activate
 export PYTHONWARNINGS="ignore"
 ```
 
+## Differential implementation of optimizations
+
+https://github.com/Intellindust-AI-Lab/DEIMv2/compare/main...PINTO0309:DEIMv2:uv
+
 ---
 
 <h2 align="center">
