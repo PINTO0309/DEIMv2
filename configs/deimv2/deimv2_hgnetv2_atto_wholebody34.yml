@@ -75,7 +75,7 @@ optimizer:
   betas: [0.9, 0.999]
   weight_decay: 0.000025 # 0.0001 / 4 * GPUs
 
-eval_spatial_size: [320, 320]
+eval_spatial_size: [160, 160]
 train_dataloader:
   dataset:
     transforms:
@@ -91,7 +91,7 @@ train_dataloader:
         # right-back <-> left-back
         # hand_left <-> hand_right
         - {type: RandomHorizontalFlipWithClass, class_pairs: [[9, 15], [10, 14], [11, 13], [27, 28]]}
-        - {type: Resize, size: [320, 320], }
+        - {type: Resize, size: [160, 160], }
         - {type: SanitizeBoundingBoxes, min_size: 2}
         - {type: ConvertPILImage, dtype: 'float32', scale: True}
         - {type: ConvertBoxes, fmt: 'cxcywh', normalize: True}
@@ -120,14 +120,14 @@ train_dataloader:
 
     stop_epoch: 468 # 468 + 32
     ema_restart_decay: 0.9999
-    base_size: 320
+    base_size: 160
     base_size_repeat: ~
 
 val_dataloader:
   dataset:
     transforms:
       ops:
-        - {type: Resize, size: [320, 320], }
+        - {type: Resize, size: [160, 160], }
         - {type: ConvertPILImage, dtype: 'float32', scale: True}
   shuffle: False
   total_batch_size: 16 # total batch size equals to 64 (4 GPUs * 16 batch)
