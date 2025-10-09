@@ -338,3 +338,17 @@ Maximum inference time: 9.714 ms
 Standard deviation:     0.814 ms
 ============================================================
 ```
+
+# CoreML
+- Fixed a critical bug in `coremltools`.
+  ```
+  sed -i '8a import tf_keras' .venv/lib/python3.11/site-packages/coremltools/converters/mil/frontend/tensorflow2/load.py
+  sed -i 's/_tf\.keras\./tf_keras./g' .venv/lib/python3.11/site-packages/coremltools/converters/mil/frontend/tensorflow2/load.py
+  ```
+- Convert
+  ```bash
+  uv run python tools/deployment/convert_tf_to_coreml.py \
+  --input saved_model \
+  --sizes 640 640 \
+  --output deimv2.mlpackage
+  ```

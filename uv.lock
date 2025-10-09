@@ -47,6 +47,15 @@ wheels = [
 ]
 
 [[package]]
+name = "attrs"
+version = "25.4.0"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/6b/5c/685e6633917e101e5dcb62b9dd76946cbb57c26e133bae9e0cd36033c0a9/attrs-25.4.0.tar.gz", hash = "sha256:16d5969b87f0859ef33a48b35d55ac1be6e42ae49d5e853b597db70c35c57e11", size = 934251, upload-time = "2025-10-06T13:54:44.725Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/3a/2a/7cc015f5b9f5db42b7d48157e23356022889fc354a2813c15934b7cb5c0e/attrs-25.4.0-py3-none-any.whl", hash = "sha256:adcf7e2a1fb3b36ac48d97835bb6d8ade15b8dcce26aba8bf1d14847b57a3373", size = 67615, upload-time = "2025-10-06T13:54:43.17Z" },
+]
+
+[[package]]
 name = "beautifulsoup4"
 version = "4.14.0"
 source = { registry = "https://pypi.org/simple" }
@@ -71,6 +80,19 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/44/d7/44c109d7586efc529e2ff1dd34268f528866f1fedde7348de40d077b20ae/calflops-0.3.2.tar.gz", hash = "sha256:3c5f79598ea4e844235d2c2fb8ec9d49edb51452f0341e2fdd6b5d521a667369", size = 1410635, upload-time = "2024-06-07T09:31:17.611Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/79/68/02c8117d39cb4b32c8d5cd537068e3b118f13596e5317218c162a53f6b79/calflops-0.3.2-py3-none-any.whl", hash = "sha256:323bc99589715f148d4e4270ae4ea7f5724f4d26c9608fae5e6749334744849b", size = 29988, upload-time = "2024-06-07T09:31:14.533Z" },
+]
+
+[[package]]
+name = "cattrs"
+version = "25.3.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "attrs" },
+    { name = "typing-extensions" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/6e/00/2432bb2d445b39b5407f0a90e01b9a271475eea7caf913d7a86bcb956385/cattrs-25.3.0.tar.gz", hash = "sha256:1ac88d9e5eda10436c4517e390a4142d88638fe682c436c93db7ce4a277b884a", size = 509321, upload-time = "2025-10-07T12:26:08.737Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/d8/2b/a40e1488fdfa02d3f9a653a61a5935ea08b3c2225ee818db6a76c7ba9695/cattrs-25.3.0-py3-none-any.whl", hash = "sha256:9896e84e0a5bf723bc7b4b68f4481785367ce07a8a02e7e9ee6eb2819bc306ff", size = 70738, upload-time = "2025-10-07T12:26:06.603Z" },
 ]
 
 [[package]]
@@ -151,6 +173,27 @@ wheels = [
 ]
 
 [[package]]
+name = "coremltools"
+version = "9.0b1"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "attrs" },
+    { name = "cattrs" },
+    { name = "numpy" },
+    { name = "packaging" },
+    { name = "protobuf" },
+    { name = "pyaml" },
+    { name = "sympy" },
+    { name = "tqdm" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/7b/4b/10f7409775150955bb7649124c592480d764491ebfacd10835130f964485/coremltools-9.0b1.tar.gz", hash = "sha256:55c0e91b0362865041cb3d8625065b9c2b9ac741b5bc8506ae3ad72012178c53", size = 1610618, upload-time = "2025-07-28T17:36:01.739Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/80/02/c8d007a35da68f81bbf5d90c05984bbcc0ccc7d5ea2e5507d19ea86f121c/coremltools-9.0b1-cp311-none-macosx_10_15_x86_64.whl", hash = "sha256:40bb1ee7019953b4f269af40198421a31ea2b1409abdfae42373ee67a705e803", size = 2789288, upload-time = "2025-07-28T17:34:26.476Z" },
+    { url = "https://files.pythonhosted.org/packages/7c/b3/4bb302a1c9f4b64d01ff5007e48c81e3026f314f3de113378830f68e8fb1/coremltools-9.0b1-cp311-none-macosx_11_0_arm64.whl", hash = "sha256:b17308ad20ca7cb87ee829f56571889897c812a235e01fae8bcd74cd48cdcf22", size = 2763370, upload-time = "2025-07-28T17:34:33.508Z" },
+    { url = "https://files.pythonhosted.org/packages/ce/52/49125336587d8f44c73c6b246f91f716646ada47d6f379cb48533c220018/coremltools-9.0b1-cp311-none-manylinux1_x86_64.whl", hash = "sha256:99d7a287d6d09652f89963c9f0f2e0abc2e8b7ac011b00ce7cb7a925b7f4fb81", size = 2305112, upload-time = "2025-07-28T17:34:39.563Z" },
+]
+
+[[package]]
 name = "cycler"
 version = "0.12.1"
 source = { registry = "https://pypi.org/simple" }
@@ -165,6 +208,7 @@ version = "0.1.0"
 source = { virtual = "." }
 dependencies = [
     { name = "calflops" },
+    { name = "coremltools" },
     { name = "faster-coco-eval" },
     { name = "gdown" },
     { name = "mmcv" },
@@ -190,6 +234,7 @@ dependencies = [
 [package.metadata]
 requires-dist = [
     { name = "calflops", specifier = "==0.3.2" },
+    { name = "coremltools", specifier = "==9.0b1" },
     { name = "faster-coco-eval", specifier = "==1.6.7" },
     { name = "gdown", specifier = "==5.2.0" },
     { name = "mmcv", specifier = "==2.2.0" },
@@ -901,6 +946,18 @@ wheels = [
     { url = "https://files.pythonhosted.org/packages/79/87/157c8e7959ec39ced1b11cc93c730c4fb7f9d408569a6c59dbd92ceb35db/psutil-7.1.0-cp37-abi3-win32.whl", hash = "sha256:09ad740870c8d219ed8daae0ad3b726d3bf9a028a198e7f3080f6a1888b99bca", size = 244812, upload-time = "2025-09-17T20:15:07.462Z" },
     { url = "https://files.pythonhosted.org/packages/bf/e9/b44c4f697276a7a95b8e94d0e320a7bf7f3318521b23de69035540b39838/psutil-7.1.0-cp37-abi3-win_amd64.whl", hash = "sha256:57f5e987c36d3146c0dd2528cd42151cf96cd359b9d67cfff836995cc5df9a3d", size = 247965, upload-time = "2025-09-17T20:15:09.673Z" },
     { url = "https://files.pythonhosted.org/packages/26/65/1070a6e3c036f39142c2820c4b52e9243246fcfc3f96239ac84472ba361e/psutil-7.1.0-cp37-abi3-win_arm64.whl", hash = "sha256:6937cb68133e7c97b6cc9649a570c9a18ba0efebed46d8c5dae4c07fa1b67a07", size = 244971, upload-time = "2025-09-17T20:15:12.262Z" },
+]
+
+[[package]]
+name = "pyaml"
+version = "25.7.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "pyyaml" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/c4/01/41f63d66a801a561c9e335523516bd5f761bc43cc61f8b75918306bf2da8/pyaml-25.7.0.tar.gz", hash = "sha256:e113a64ec16881bf2b092e2beb84b7dcf1bd98096ad17f5f14e8fb782a75d99b", size = 29814, upload-time = "2025-07-10T18:44:51.824Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/a8/ee/a878f2ad010cbccb311f947f0f2f09d38f613938ee28c34e60fceecc75a1/pyaml-25.7.0-py3-none-any.whl", hash = "sha256:ce5d7867cc2b455efdb9b0448324ff7b9f74d99f64650f12ca570102db6b985f", size = 26418, upload-time = "2025-07-10T18:44:50.679Z" },
 ]
 
 [[package]]
