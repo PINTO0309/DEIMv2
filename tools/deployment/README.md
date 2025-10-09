@@ -360,4 +360,4 @@ Standard deviation:     0.814 ms
   --sizes 640 640 \
   --output deimv2.mlpackage
   ```
-<img width="763" height="697" alt="image" src="https://github.com/user-attachments/assets/1302cdd6-3aec-46b7-b17c-c4cf4348aba2" />
+  <img width="763" height="697" alt="image" src="https://github.com/user-attachments/assets/1302cdd6-3aec-46b7-b17c-c4cf4348aba2" />
