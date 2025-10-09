@@ -39,7 +39,7 @@ DEIMTransformer:
 
   num_layers: 3
   eval_idx: -1
-  num_queries: 340
+  num_queries: 170
 
   # FFN
   dim_feedforward: 160
@@ -49,7 +49,7 @@ DEIMTransformer:
   use_gateway: False
 
 PostProcessor:
-  num_top_queries: 340
+  num_top_queries: 170
 
 # Increase to search for the optimal ema
 epoches: 500 # 468 + 32
