@@ -290,7 +290,7 @@ sed -i 's/^import tensorflow\.keras as keras$/import tf_keras as keras/' .venv/l
 sed -i '97,109c\  import tf_keras as keras' .venv/lib/python3.11/site-packages/tensorflow_hub/__init__.py
 sed -i '25,31c import tf_keras as keras' .venv/lib/python3.11/site-packages/tensorflow_hub/keras_layer.py
 
-tensorflowjs_converter \
+uv run tensorflowjs_converter \
 --input_format tf_saved_model \
 --output_format tfjs_graph_model \
 saved_model \
