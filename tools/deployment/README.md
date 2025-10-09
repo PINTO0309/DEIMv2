@@ -1,5 +1,8 @@
 # Export
 
+> [!warning]
+> The pre-trained weights for the Coco dataset published in the official paper implementation cannot be used. Only the re-trained weights in this fork repository can be processed successfully.
+
 ```bash
 cd ../..
 
