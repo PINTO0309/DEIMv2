@@ -3,7 +3,7 @@
 > [!warning]
 > The pre-trained weights for the coco dataset published in the official paper implementation cannot be used. Only the re-trained weights in this fork repository can be processed successfully.
 
-|deimv2_dinov3_x_coco.pth -> onnx|If re-trained by this fork|
+|deimv2_dinov3_x_coco.pth -> onnx|If re-trained by this fork -> onnx|
 |:-:|:-:|
 |<img width="480" height="360" alt="image" src="https://github.com/user-attachments/assets/a125ba79-e592-4be6-b8c2-914331b7d167" />|<img width="480" height="360" alt="image" src="https://github.com/user-attachments/assets/f5e60ec3-d792-419e-b126-a1ca99988662" />|
 |![000000009420](https://github.com/user-attachments/assets/229df7e8-d86e-4e8c-a05c-442a9e4aa501)|![000000009420](https://github.com/user-attachments/assets/a1abdb8f-66c3-45f2-8c6a-95a725ca496f)|
