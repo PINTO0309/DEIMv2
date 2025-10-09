@@ -1,4 +1,4 @@
-# This fork `uv` branch only has some parameters customized for learning WholebodyXX. Also, ONNX/TensorRT/LiteRT(TFLite)/TensorFlow.js/onnxruntime-web optimization.
+# This fork `uv` branch only has some parameters customized for learning WholebodyXX. Also, ONNX/TensorRT/LiteRT(TFLite)/TensorFlow.js/onnxruntime-web/CoreML optimization.
 
 ```bash
 # conda unnecessary
