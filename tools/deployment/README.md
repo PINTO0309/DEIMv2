@@ -341,7 +341,7 @@ Standard deviation:     0.814 ms
 
 # CoreML
 - Fixed a critical bug in `coremltools`.
-  ```
+  ```bash
   sed -i '8a import tf_keras' .venv/lib/python3.11/site-packages/coremltools/converters/mil/frontend/tensorflow2/load.py
   sed -i 's/_tf\.keras\./tf_keras./g' .venv/lib/python3.11/site-packages/coremltools/converters/mil/frontend/tensorflow2/load.py
   ```
