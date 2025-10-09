@@ -1,7 +1,7 @@
 # Export
 
 > [!warning]
-> The pre-trained weights for the coco dataset published in the official paper implementation cannot be used. Only the re-trained weights in this fork repository can be processed successfully. If you don't need to deploy to a framework other than PyTorch, there is no need to retrain.
+> The pre-trained weights for the coco dataset published in the official paper implementation cannot be used. Only the re-trained weights in this fork repository can be processed successfully. If you don't need to deploy to a framework other than PyTorch, there is no need to retrain. If the output from TFLite, TF.JS, or CoreML is unexpected, try converting it using the model before running `make_prep.py`.
 
 |deimv2_dinov3_x_coco.pth -> onnx|If re-trained by this fork -> onnx|
 |:-:|:-:|
