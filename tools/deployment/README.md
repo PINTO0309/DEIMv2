@@ -348,6 +348,9 @@ Standard deviation:     0.814 ms
 ```
 
 # CoreML
+> [!warning]
+> I don't own any Apple products, so although I have confirmed that the model conversion was successful, I don't have a debugging environment, so the behavior of the output model has not been verified.
+
 - Fixed a critical bug in `coremltools`.
   ```bash
   sed -i '8a import tf_keras' .venv/lib/python3.11/site-packages/coremltools/converters/mil/frontend/tensorflow2/load.py
