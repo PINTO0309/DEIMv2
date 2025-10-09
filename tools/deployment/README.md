@@ -3,9 +3,10 @@
 > [!warning]
 > The pre-trained weights for the coco dataset published in the official paper implementation cannot be used. Only the re-trained weights in this fork repository can be processed successfully.
 
-|deimv2_dinov3_x_coco.pth|If re-learned by this fork|
+|deimv2_dinov3_x_coco.pth|If re-trained by this fork|
 |:-:|:-:|
 |<img width="480" height="360" alt="image" src="https://github.com/user-attachments/assets/a125ba79-e592-4be6-b8c2-914331b7d167" />|<img width="480" height="360" alt="image" src="https://github.com/user-attachments/assets/f5e60ec3-d792-419e-b126-a1ca99988662" />|
+|![000000005673](https://github.com/user-attachments/assets/39bc9472-e264-4821-a2fa-ff83df120ae5)|![000000005673](https://github.com/user-attachments/assets/1f8d13a4-7eb5-4de4-bbaf-f55af4fb8200)|
 
 ```bash
 cd ../..
