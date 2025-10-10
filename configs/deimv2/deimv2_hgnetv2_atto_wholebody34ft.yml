@@ -75,12 +75,12 @@ optimizer:
   betas: [0.9, 0.999]
   weight_decay: 0.00000625 # 0.0001 / 4 * GPUs
 
-eval_spatial_size: [160, 160]
+eval_spatial_size: [192, 192]
 train_dataloader:
   dataset:
     transforms:
       ops:
-        # - {type: Mosaic, output_size: 160, rotation_range: 10, translation_range: [0.1, 0.1], scaling_range: [0.5, 1.5],
+        # - {type: Mosaic, output_size: 192, rotation_range: 10, translation_range: [0.1, 0.1], scaling_range: [0.5, 1.5],
         #    probability: 1.0, fill_value: 0, use_cache: True, max_cached_images: 50, random_pop: True}
         - {type: RandomPhotometricDistort, p: 0.5}
         - {type: RandomZoomOut, p: 0.5, fill: 0, side_range: [1.0, 1.5]}
@@ -91,7 +91,7 @@ train_dataloader:
         # right-back <-> left-back
         # hand_left <-> hand_right
         - {type: RandomHorizontalFlipWithClass, class_pairs: [[9, 15], [10, 14], [11, 13], [27, 28]]}
-        - {type: Resize, size: [160, 160], }
+        - {type: Resize, size: [192, 192], }
         - {type: SanitizeBoundingBoxes, min_size: 2}
         - {type: ConvertPILImage, dtype: 'float32', scale: True}
         - {type: ConvertBoxes, fmt: 'cxcywh', normalize: True}
@@ -120,14 +120,14 @@ train_dataloader:
 
     stop_epoch: 20 # 468 + 32
     ema_restart_decay: 0.9999
-    base_size: 160
+    base_size: 192
     base_size_repeat: ~
 
 val_dataloader:
   dataset:
     transforms:
       ops:
-        - {type: Resize, size: [160, 160], }
+        - {type: Resize, size: [192, 192], }
         - {type: ConvertPILImage, dtype: 'float32', scale: True}
   shuffle: False
   total_batch_size: 16 # total batch size equals to 64 (4 GPUs * 16 batch)
