@@ -152,9 +152,9 @@ uv run python tools/deployment/make_prep.py -m ${WEIGHT}_${QUERIES}query.onnx -s
 
 ################################################## Atto
 WEIGHT=deimv2_hgnetv2_atto_wholebody34
-H=320
-W=320
-QUERIES=340
+H=160
+W=160
+QUERIES=170
 
 uv run python tools/deployment/export_onnx.py \
 -c configs/deimv2/${WEIGHT}.yml \
@@ -289,6 +289,12 @@ sit4tfjs==1.0.0
 sed -i 's/^import tensorflow\.keras as keras$/import tf_keras as keras/' .venv/lib/python3.11/site-packages/tensorflowjs/converters/tf_module_mapper.py
 sed -i '97,109c\  import tf_keras as keras' .venv/lib/python3.11/site-packages/tensorflow_hub/__init__.py
 sed -i '25,31c import tf_keras as keras' .venv/lib/python3.11/site-packages/tensorflow_hub/keras_layer.py
+
+uv run tensorflowjs_converter \
+--input_format tf_saved_model \
+--output_format tfjs_graph_model \
+saved_model \
+tfjs_model
 
 uv run sit4tfjs \
 --input_tfjs_file_path ./tfjs_model \
