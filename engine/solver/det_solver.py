@@ -173,6 +173,9 @@ class DetSolver(BaseSolver):
                     self.load_resume_state(str(self.output_dir / 'best_stg1.pth'))
                     print(f'Refresh EMA at epoch {epoch} with decay {self.ema.decay}')
 
+            if self.output_dir:
+                dist_utils.save_on_master(self.state_dict(), self.output_dir / 'last_full_epoch.pth')
+
             log_stats = {
                 **{f'train_{k}': v for k, v in train_stats.items()},
                 **{f'test_{k}': v for k, v in test_stats.items()},
