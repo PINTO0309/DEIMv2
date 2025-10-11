@@ -173,7 +173,6 @@ class AbstractModel(ABC):
             print(f'{Color.GREEN("Enabled ONNX ExecutionProviders:")}')
             pprint(f'{self._providers}')
 
-            self._input_shapes = [[1, 3, 640, 640]]
             self._input_names = [
                 input.name for input in self._interpreter.get_inputs()
             ]
@@ -432,8 +431,8 @@ class DEIMv2(AbstractModel):
                     classid = int(box[0])
                     x_min = int(max(0, box[1]) * image_width)
                     y_min = int(max(0, box[2]) * image_height)
-                    x_max = int(min(box[3], self._input_shapes[0][self._w_index]) * image_width)
-                    y_max = int(min(box[4], self._input_shapes[0][self._h_index]) * image_height)
+                    x_max = int(min(box[3], 1.0) * image_width)
+                    y_max = int(min(box[4], 1.0) * image_height)
                     cx = (x_min + x_max) // 2
                     cy = (y_min + y_max) // 2
                     result_boxes.append(
