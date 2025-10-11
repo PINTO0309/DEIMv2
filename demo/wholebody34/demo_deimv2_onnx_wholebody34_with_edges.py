@@ -31,7 +31,8 @@ BOX_COLORS = [
     [(0, 188, 212),"Left-Front"],
 ]
 
-# 接合したいクラスのペア（左右があるので一部重複している）
+# The pairs of classes you want to join
+# (there is some overlap because there are left and right classes)
 EDGES = [
     (21, 22), (21, 22),  # collarbone -> shoulder (左右)
     (21, 23),            # collarbone -> solar_plexus
