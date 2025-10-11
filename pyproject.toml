@@ -5,6 +5,7 @@ description = "Add your description here"
 readme = "README.md"
 requires-python = "==3.11.12"
 dependencies = [
+    "ai-edge-litert==2.0.2",
     "calflops==0.3.2",
     "coremltools==9.0b1",
     "faster-coco-eval==1.6.7",

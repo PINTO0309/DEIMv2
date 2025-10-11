@@ -47,12 +47,38 @@ wheels = [
 ]
 
 [[package]]
+name = "ai-edge-litert"
+version = "2.0.2"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "backports-strenum" },
+    { name = "flatbuffers" },
+    { name = "numpy" },
+    { name = "tqdm" },
+    { name = "typing-extensions" },
+]
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/88/20/750fe8a2c0c6b63a2f5076c8bc970323ca1938b3e7734836cc5e35eb3ecb/ai_edge_litert-2.0.2-cp311-cp311-macosx_12_0_arm64.whl", hash = "sha256:1672e57f26bd8fc2f61122b82f0b0a1b0bd81935553abfc56e95b36316645045", size = 179089, upload-time = "2025-09-17T22:47:20.888Z" },
+    { url = "https://files.pythonhosted.org/packages/10/00/34f9177168b5d3ed4a7ee40b8f26beab0d97ebcb24330c09ecf55269a243/ai_edge_litert-2.0.2-cp311-cp311-manylinux_2_27_aarch64.whl", hash = "sha256:dbec9e1cb697d24da74453ebc878a191719690896130fedcb6898b9b0fe67c30", size = 70097653, upload-time = "2025-09-17T20:15:39.397Z" },
+    { url = "https://files.pythonhosted.org/packages/5b/2b/0c8b31f3d9cae1e8de3fe157e6619add848339a53f66be65c4ed59e76515/ai_edge_litert-2.0.2-cp311-cp311-manylinux_2_27_x86_64.whl", hash = "sha256:ff126d933ecb87fa006dc235e028f417d2302bd5a3f9b5086680e12e8d8ae644", size = 91105522, upload-time = "2025-09-17T20:00:23.839Z" },
+]
+
+[[package]]
 name = "attrs"
 version = "25.4.0"
 source = { registry = "https://pypi.org/simple" }
 sdist = { url = "https://files.pythonhosted.org/packages/6b/5c/685e6633917e101e5dcb62b9dd76946cbb57c26e133bae9e0cd36033c0a9/attrs-25.4.0.tar.gz", hash = "sha256:16d5969b87f0859ef33a48b35d55ac1be6e42ae49d5e853b597db70c35c57e11", size = 934251, upload-time = "2025-10-06T13:54:44.725Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/3a/2a/7cc015f5b9f5db42b7d48157e23356022889fc354a2813c15934b7cb5c0e/attrs-25.4.0-py3-none-any.whl", hash = "sha256:adcf7e2a1fb3b36ac48d97835bb6d8ade15b8dcce26aba8bf1d14847b57a3373", size = 67615, upload-time = "2025-10-06T13:54:43.17Z" },
+]
+
+[[package]]
+name = "backports-strenum"
+version = "1.3.1"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/35/c7/2ed54c32fed313591ffb21edbd48db71e68827d43a61938e5a0bc2b6ec91/backports_strenum-1.3.1.tar.gz", hash = "sha256:77c52407342898497714f0596e86188bb7084f89063226f4ba66863482f42414", size = 7257, upload-time = "2023-12-09T14:36:40.937Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/d6/50/56cf20e2ee5127b603b81d5a69580a1a325083e2b921aa8f067da83927c0/backports_strenum-1.3.1-py3-none-any.whl", hash = "sha256:cdcfe36dc897e2615dc793b7d3097f54d359918fc448754a517e6f23044ccf83", size = 8304, upload-time = "2023-12-09T14:36:39.905Z" },
 ]
 
 [[package]]
@@ -207,6 +233,7 @@ name = "deimv2"
 version = "0.1.0"
 source = { virtual = "." }
 dependencies = [
+    { name = "ai-edge-litert" },
     { name = "calflops" },
     { name = "coremltools" },
     { name = "faster-coco-eval" },
@@ -233,6 +260,7 @@ dependencies = [
 
 [package.metadata]
 requires-dist = [
+    { name = "ai-edge-litert", specifier = "==2.0.2" },
     { name = "calflops", specifier = "==0.3.2" },
     { name = "coremltools", specifier = "==9.0b1" },
     { name = "faster-coco-eval", specifier = "==1.6.7" },
