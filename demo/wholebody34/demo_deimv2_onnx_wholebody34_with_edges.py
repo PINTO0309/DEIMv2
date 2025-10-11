@@ -34,15 +34,15 @@ BOX_COLORS = [
 # The pairs of classes you want to join
 # (there is some overlap because there are left and right classes)
 EDGES = [
-    (21, 22), (21, 22),  # collarbone -> shoulder (左右)
+    (21, 22), (21, 22),  # collarbone -> shoulder (left and right)
     (21, 23),            # collarbone -> solar_plexus
-    (22, 24), (22, 24),  # shoulder -> elbow (左右)
-    (22, 30), (22, 30),  # shoulder -> hip_joint (左右)
-    (24, 25), (24, 25),  # elbow -> wrist (左右)
+    (22, 24), (22, 24),  # shoulder -> elbow (left and right)
+    (22, 30), (22, 30),  # shoulder -> hip_joint (left and right)
+    (24, 25), (24, 25),  # elbow -> wrist (left and right)
     (23, 29),            # solar_plexus -> abdomen
-    (29, 30), (29, 30),  # abdomen -> hip_joint (左右)
-    (30, 31), (30, 31),  # hip_joint -> knee (左右)
-    (31, 32), (31, 32),  # knee -> ankle (左右)
+    (29, 30), (29, 30),  # abdomen -> hip_joint (left and right)
+    (30, 31), (30, 31),  # hip_joint -> knee (left and right)
+    (31, 32), (31, 32),  # knee -> ankle (left and right)
 ]
 
 class Color(Enum):
@@ -144,7 +144,7 @@ class AbstractModel(ABC):
                     # https://onnxruntime.ai/docs/execution-providers/TensorRT-ExecutionProvider.html#data-dependant-shape-dds-ops
                     # https://github.com/microsoft/onnxruntime/pull/22681/files
                     # https://github.com/microsoft/onnxruntime/pull/23893/files
-                    'trt_op_types_to_exclude': 'NonMaxSuppression,NonZero,RoiAlign"',
+                    'trt_op_types_to_exclude': 'NonMaxSuppression,NonZero,RoiAlign',
                 }
             ),
             'CUDAExecutionProvider',
