@@ -90,7 +90,7 @@ class DINOv3STAs(nn.Module):
                 del self.dinov3.blocks[-1]
             del self.dinov3.head
         else:
-            self.dinov3 =  VisionTransformer(embed_dim=embed_dim, num_heads=num_heads)
+            self.dinov3 =  VisionTransformer(embed_dim=embed_dim, num_heads=num_heads, return_layers=interaction_indexes)
             if weights_path is not None:
                 print(f'Loading ckpt from {weights_path}...')
                 checkpoint = torch.load(weights_path)
