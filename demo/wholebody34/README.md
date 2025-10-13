@@ -75,7 +75,10 @@ uv run python demo/wholebody34/demo_deimv2_onnx_wholebody34_with_edges.py \
 -dgm \
 -dnm \
 -dhm \
--dlr
+-dlr \
+-dtk \
+-dti \
+-dhd
 ```
 |Image|Image|
 |:-:|:-:|
