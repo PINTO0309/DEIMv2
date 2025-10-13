@@ -152,9 +152,9 @@ uv run python tools/deployment/make_prep.py -m ${WEIGHT}_${QUERIES}query.onnx -s
 
 ################################################## Atto
 WEIGHT=deimv2_hgnetv2_atto_wholebody34
-H=192
-W=192
-QUERIES=170
+H=320
+W=320
+QUERIES=340
 
 uv run python tools/deployment/export_onnx.py \
 -c configs/deimv2/${WEIGHT}.yml \
