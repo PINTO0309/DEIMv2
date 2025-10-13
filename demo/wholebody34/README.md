@@ -7,8 +7,8 @@ usage: demo_deimv2_onnx_wholebody34_with_edges.py
 [-it {fp16,int8}] [-dvw] [-dwk] [-ost OBJECT_SOCRE_THRESHOLD]
 [-ast ATTRIBUTE_SOCRE_THRESHOLD] [-kst KEYPOINT_THRESHOLD]
 [-kdm {dot,box,both}] [-ebm] [-dnm] [-dgm] [-dlr] [-dhm]
-[-drc [DISABLE_RENDER_CLASSIDS ...]] [-efm] [-oyt]
-[-bblw BOUNDING_BOX_LINE_WIDTH]
+[-drc [DISABLE_RENDER_CLASSIDS ...]] [-efm] [-dtk] [-dti] [-dhd]
+[-oyt] [-bblw BOUNDING_BOX_LINE_WIDTH] [-chf CAMERA_HORIZONTAL_FOV]
 
 options:
   -h, --help
@@ -52,10 +52,18 @@ options:
     Class ID to disable bounding box drawing. List[int]. e.g. -drc 17 18 19
   -efm, --enable_face_mosaic
     Enable face mosaic.
+  -dtk, --disable_tracking
+    Disable instance tracking. (Press R on the keyboard to switch modes)
+  -dti, --disable_trackid_overlay
+    Disable TrackID overlay. (Press T on the keyboard to switch modes)
+  -dhd, --disable_head_distance_measurement
+    Disable Head distance measurement. (Press M on the keyboard to switch modes)
   -oyt, --output_yolo_format_text
     Output YOLO format texts and images.
   -bblw BOUNDING_BOX_LINE_WIDTH, --bounding_box_line_width BOUNDING_BOX_LINE_WIDTH
     Bounding box line width. Default: 2
+  -chf CAMERA_HORIZONTAL_FOV, --camera_horizontal_fov CAMERA_HORIZONTAL_FOV
+    Camera horizontal FOV. Default: 90
 ```
 ### Image files
 ```bash
