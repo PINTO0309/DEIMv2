@@ -84,8 +84,14 @@ class DINOv3STAs(nn.Module):
         hidden_dim=None,
     ):
         super(DINOv3STAs, self).__init__()
-        if 'dinov3' in name:
-            self.dinov3 = torch.hub.load('./dinov3', name, source='local', weights=weights_path)
+        if 'vits' in name:
+            self.dinov3 = torch.hub.load(
+                repo_or_dir='facebookresearch/dinov3:7bf81b2a0eb0e330dbc84a5d3d31d86ed3cdbd84',
+                model=name,
+                source='github',
+                weights=weights_path,
+                trust_repo=True,
+            )
             while len(self.dinov3.blocks) != (interaction_indexes[-1] + 1):
                 del self.dinov3.blocks[-1]
             del self.dinov3.head
@@ -143,7 +149,7 @@ class DINOv3STAs(nn.Module):
 
         if len(all_layers) == 1:    # repeat the same layer for all the three scales
             all_layers = [all_layers[0], all_layers[0], all_layers[0]]
-        
+
         sem_feats = []
         num_scales = len(all_layers) - 2
         for i, sem_feat in enumerate(all_layers):
