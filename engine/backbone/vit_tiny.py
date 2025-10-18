@@ -260,6 +260,7 @@ class VisionTransformer(nn.Module):
             normalize_coords="separate", shift_coords=None, jitter_coords=None,
             rescale_coords=None, dtype=None, device=None,
         )
+        
         self.init_weights()
 
     def init_weights(self):

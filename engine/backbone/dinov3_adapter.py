@@ -10,7 +10,7 @@ This software may be used and distributed in accordance with
 the terms of the DINOv3 License Agreement.
 """
 
-import math
+import os
 
 import torch
 import torch.nn as nn
@@ -20,6 +20,7 @@ import torch.utils.checkpoint as cp
 from functools import partial
 from ..core import register
 from .vit_tiny import VisionTransformer
+from .dinov3 import DinoVisionTransformer
 
 
 class SpatialPriorModulev2(nn.Module):
@@ -85,18 +86,19 @@ class DINOv3STAs(nn.Module):
     ):
         super(DINOv3STAs, self).__init__()
         if 'dinov3' in name:
-            self.dinov3 = torch.hub.load('./dinov3', name, source='local', weights=weights_path)
-            while len(self.dinov3.blocks) != (interaction_indexes[-1] + 1):
-                del self.dinov3.blocks[-1]
-            del self.dinov3.head
+            self.dinov3 = DinoVisionTransformer(name=name)
+            if weights_path is not None and os.path.exists(weights_path):
+                print(f'Loading ckpt from {weights_path}...')
+                self.dinov3.load_state_dict(torch.load(weights_path))
+            else:
+                print('Training DINOv3 from scratch...')
         else:
             self.dinov3 =  VisionTransformer(embed_dim=embed_dim, num_heads=num_heads, return_layers=interaction_indexes)
-            if weights_path is not None:
+            if weights_path is not None and os.path.exists(weights_path):
                 print(f'Loading ckpt from {weights_path}...')
-                checkpoint = torch.load(weights_path)
-                self.dinov3._model.load_state_dict(checkpoint)
+                self.dinov3._model.load_state_dict(torch.load(weights_path))
             else:
-                print('Training ViT-Tiny from scratch!')
+                print('Training ViT-Tiny from scratch...')
 
         embed_dim = self.dinov3.embed_dim
         self.interaction_indexes = interaction_indexes
