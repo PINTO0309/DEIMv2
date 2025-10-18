@@ -1,6 +1,6 @@
 # Ignored Files
 outputs/
-# ckpts/
+ckpts/
 testenv/
 backup
 
