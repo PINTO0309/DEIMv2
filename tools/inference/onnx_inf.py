@@ -55,14 +55,17 @@ def draw(images, labels, boxes, scores, ratios, paddings, thrh=0.4):
     return result_images
 
 
-def process_image(sess, im_pil, size=640):
+def process_image(sess, im_pil, size=640, model_size='s'):
     # Resize image while preserving aspect ratio
     resized_im_pil, ratio, pad_w, pad_h = resize_with_aspect_ratio(im_pil, size)
     orig_size = torch.tensor([[resized_im_pil.size[1], resized_im_pil.size[0]]])
 
     transforms = T.Compose([
-        T.ToTensor(),
-    ])
+            T.ToTensor(),
+            T.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]) 
+                if model_size not in ['atto', 'femto', 'pico', 'n'] 
+                else T.Lambda(lambda x: x)
+        ])
     im_data = transforms(resized_im_pil).unsqueeze(0)
 
     output = sess.run(
@@ -80,7 +83,7 @@ def process_image(sess, im_pil, size=640):
     print("Image processing complete. Result saved as 'result.jpg'.")
 
 
-def process_video(sess, video_path, size=640):
+def process_video(sess, video_path, size=640, model_size='s'):
     cap = cv2.VideoCapture(video_path)
 
     # Get video properties
@@ -107,8 +110,11 @@ def process_video(sess, video_path, size=640):
         orig_size = torch.tensor([[resized_frame_pil.size[1], resized_frame_pil.size[0]]])
 
         transforms = T.Compose([
-            T.ToTensor(),
-        ])
+                T.ToTensor(),
+                T.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]) 
+                    if model_size not in ['atto', 'femto', 'pico', 'n'] 
+                    else T.Lambda(lambda x: x)
+            ])
         im_data = transforms(resized_frame_pil).unsqueeze(0)
 
         output = sess.run(
@@ -152,10 +158,10 @@ def main(args):
     try:
         # Try to open the input as an image
         im_pil = Image.open(input_path).convert('RGB')
-        process_image(sess, im_pil, size)
+        process_image(sess, im_pil, size, args.model_size)
     except IOError:
         # Not an image, process as video
-        process_video(sess, input_path, size)
+        process_video(sess, input_path, size, args.model_size)
 
 
 if __name__ == '__main__':
@@ -163,5 +169,7 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     parser.add_argument('--onnx', type=str, required=True, help='Path to the ONNX model file.')
     parser.add_argument('--input', type=str, required=True, help='Path to the input image or video file.')
+    parser.add_argument('-ms', '--model-size', type=str, required=True, choices=['atto', 'femto', 'pico', 'n', 's', 'm', 'l', 'x'], 
+                        help='Model size')
     args = parser.parse_args()
     main(args)

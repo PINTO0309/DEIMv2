@@ -20,7 +20,7 @@ sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '../../'
 from engine.core import YAMLConfig
 
 
-def draw(images, labels, boxes, scores, thrh=0.4):
+def draw(images, labels, boxes, scores, thrh=0.45):
     for i, im in enumerate(images):
         draw = ImageDraw.Draw(im)
 
@@ -36,7 +36,7 @@ def draw(images, labels, boxes, scores, thrh=0.4):
         im.save('torch_results.jpg')
 
 
-def process_image(model, device, file_path, size=(640, 640)):
+def process_image(model, device, file_path, size=(640, 640), vit_backbone=False):
     im_pil = Image.open(file_path).convert('RGB')
     w, h = im_pil.size
     orig_size = torch.tensor([[w, h]]).to(device)
@@ -44,6 +44,8 @@ def process_image(model, device, file_path, size=(640, 640)):
     transforms = T.Compose([
         T.Resize(size),
         T.ToTensor(),
+        T.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]) 
+                if vit_backbone else T.Lambda(lambda x: x)
     ])
     im_data = transforms(im_pil).unsqueeze(0).to(device)
 
@@ -53,7 +55,7 @@ def process_image(model, device, file_path, size=(640, 640)):
     draw([im_pil], labels, boxes, scores)
 
 
-def process_video(model, device, file_path, size=(640, 640)):
+def process_video(model, device, file_path, size=(640, 640), vit_backbone=False):
     cap = cv2.VideoCapture(file_path)
 
     # Get video properties
@@ -68,6 +70,8 @@ def process_video(model, device, file_path, size=(640, 640)):
     transforms = T.Compose([
         T.Resize(size),
         T.ToTensor(),
+        T.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]) 
+                if vit_backbone else T.Lambda(lambda x: x)
     ])
 
     frame_count = 0
@@ -139,16 +143,17 @@ def main(args):
     device = args.device
     model = Model().to(device)
     img_size = cfg.yaml_cfg["eval_spatial_size"]
+    vit_backbone = cfg.yaml_cfg.get('DINOv3STAs', False)
 
     # Check if the input file is an image or a video
     file_path = args.input
     if os.path.splitext(file_path)[-1].lower() in ['.jpg', '.jpeg', '.png', '.bmp']:
         # Process as image
-        process_image(model, device, file_path, img_size)
+        process_image(model, device, file_path, img_size, vit_backbone)
         print("Image processing complete.")
     else:
         # Process as video
-        process_video(model, device, file_path, img_size)
+        process_video(model, device, file_path, img_size, vit_backbone)
 
 
 if __name__ == '__main__':

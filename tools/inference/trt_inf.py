@@ -135,7 +135,7 @@ def draw(images, labels, boxes, scores, thrh=0.4):
 
     return images
 
-def process_image(m, file_path, device, size=(640, 640)):
+def process_image(m, file_path, device, size=(640, 640), model_size='s'):
     im_pil = Image.open(file_path).convert('RGB')
     w, h = im_pil.size
     orig_size = torch.tensor([w, h])[None].to(device)
@@ -143,6 +143,9 @@ def process_image(m, file_path, device, size=(640, 640)):
     transforms = T.Compose([
         T.Resize(size),
         T.ToTensor(),
+        T.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]) 
+                if model_size not in ['atto', 'femto', 'pico', 'n'] 
+                else T.Lambda(lambda x: x)
     ])
     im_data = transforms(im_pil)[None]
 
@@ -156,7 +159,7 @@ def process_image(m, file_path, device, size=(640, 640)):
     result_images[0].save('trt_result.jpg')
     print("Image processing complete. Result saved as 'result.jpg'.")
 
-def process_video(m, file_path, device, size=(640, 640)):
+def process_video(m, file_path, device, size=(640, 640), model_size='s'):
     cap = cv2.VideoCapture(file_path)
 
     # Get video properties
@@ -171,6 +174,9 @@ def process_video(m, file_path, device, size=(640, 640)):
     transforms = T.Compose([
         T.Resize(size),
         T.ToTensor(),
+        T.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]) 
+                    if model_size not in ['atto', 'femto', 'pico', 'n'] 
+                    else T.Lambda(lambda x: x)
     ])
 
     frame_count = 0
@@ -219,6 +225,7 @@ if __name__ == '__main__':
     parser.add_argument('-i', '--input', type=str, required=True)
     parser.add_argument('-d', '--device', type=str, default='cuda:0')
     parser.add_argument('-s', '--size', type=int, required=True, help='input size, e.g., 640')
+    parser.add_argument('-ms', '--model-size', type=str, required=True, choices=['atto', 'femto', 'pico', 'n', 's', 'm', 'l', 'x'])
 
 
     args = parser.parse_args()
@@ -229,7 +236,7 @@ if __name__ == '__main__':
     file_path = args.input
     if os.path.splitext(file_path)[-1].lower() in ['.jpg', '.jpeg', '.png', '.bmp']:
         # Process as image
-        process_image(m, file_path, args.device, size)
+        process_image(m, file_path, args.device, size, args.model_size)
     else:
         # Process as video
-        process_video(m, file_path, args.device, size)
+        process_video(m, file_path, args.device, size, args.model_size)
