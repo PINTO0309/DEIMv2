@@ -6,14 +6,16 @@ Modified from DINOv3 (https://github.com/facebookresearch/dinov3)
 Modified from https://huggingface.co/spaces/Hila/RobustViT/blob/main/ViT/ViT_new.py
 
 """
+import math
+import warnings
+from functools import partial
+from typing import List, Literal, Tuple
+
+import numpy as np
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from functools import partial
-import math
-import numpy as np
-import warnings
-from typing import Literal, Tuple
+from torch import nn
 
 
 class RopePositionEmbedding(nn.Module):
@@ -180,11 +182,11 @@ class Attention(nn.Module):
         head_dim = dim // num_heads
         self.scale = head_dim ** -0.5
         self.qkv = nn.Linear(dim, dim * 3, bias=qkv_bias)
-        self.attn_drop = nn.Dropout(attn_drop)
+        self.attn_drop = attn_drop
         self.proj = nn.Linear(dim, dim)
         self.proj_drop = nn.Dropout(proj_drop)
 
-    def forward(self, x, rope_sincos=None, register_hook=False):
+    def forward(self, x, rope_sincos=None):
         B, N, C = x.shape
         qkv = self.qkv(x).reshape(B, N, 3, self.num_heads, C // self.num_heads).permute(2, 0, 3, 1, 4)
         q, k, v = qkv.unbind(0)
@@ -200,13 +202,8 @@ class Attention(nn.Module):
             q = torch.cat((q_cls, q_patch), dim=2)
             k = torch.cat((k_cls, k_patch), dim=2)
 
-        attn = (q @ k.transpose(-2, -1)) * self.scale
-        attn = attn.softmax(dim=-1)
-        attn = self.attn_drop(attn)
-
-        if register_hook: attn.register_hook(self.save_attn_gradients)
-
-        x = (attn @ v).transpose(1, 2).reshape(B, N, C)
+        x = torch.nn.functional.scaled_dot_product_attention(q, k, v, dropout_p=self.attn_drop)
+        x = x.transpose(1, 2).reshape([B, N, C])
         x = self.proj(x)
         x = self.proj_drop(x)
         return x
@@ -220,8 +217,8 @@ class Block(nn.Module):
         self.norm2 = norm_layer(dim)
         self.mlp = Mlp(in_features=dim, hidden_features=int(dim * mlp_ratio), act_layer=act_layer, drop=drop)
 
-    def forward(self, x, rope_sincos=None, register_hook=False):
-        attn_output = self.attn(self.norm1(x), rope_sincos=rope_sincos, register_hook=register_hook)
+    def forward(self, x, rope_sincos=None):
+        attn_output = self.attn(self.norm1(x), rope_sincos=rope_sincos)
         x = x + self.drop_path(attn_output)
         x = x + self.drop_path(self.mlp(self.norm2(x)))
         return x
@@ -260,7 +257,6 @@ class VisionTransformer(nn.Module):
             normalize_coords="separate", shift_coords=None, jitter_coords=None,
             rescale_coords=None, dtype=None, device=None,
         )
-        
         self.init_weights()
 
     def init_weights(self):
@@ -286,28 +282,7 @@ class VisionTransformer(nn.Module):
     def feature_dim(self):
         return self.embed_dim
 
-    def forward_features(self, x, register_hook=False):
-        B, C, H, W = x.shape
-
-        x_embed = self._model.patch_embed(x)
-        cls_token = self._model.cls_token.expand(x_embed.shape[0], -1, -1)
-        x = torch.cat((cls_token, x_embed), dim=1)
-
-        patch_grid_h = H // self.patch_size
-        patch_grid_w = W // self.patch_size
-        rope_sincos = self._model.rope_embed(H=patch_grid_h, W=patch_grid_w)
-
-        for blk in self._model.blocks:
-            x = blk(x, rope_sincos=rope_sincos, register_hook=register_hook)
-        x = x[:, 1:, :]
-        return {'features': x.transpose(1, 2).reshape(-1, self.embed_dim, patch_grid_h, patch_grid_w)}
-    
-    def forward_pool(self, x):
-        features = self.forward_features(x)['features']
-        pooled_features = features.mean(dim=[2, 3])
-        return {'pooled_features': pooled_features}
-
-    def forward(self, x, register_hook=False):
+    def forward(self, x):
         outs = []
         B, C, H, W = x.shape
 
@@ -320,7 +295,7 @@ class VisionTransformer(nn.Module):
         rope_sincos = self._model.rope_embed(H=patch_grid_h, W=patch_grid_w)
 
         for i, blk in enumerate(self._model.blocks):
-            x = blk(x, rope_sincos=rope_sincos, register_hook=register_hook)
+            x = blk(x, rope_sincos=rope_sincos)
             if i in self.return_layers:
                 outs.append((x[:, 1:], x[:, 0]))
         return outs
