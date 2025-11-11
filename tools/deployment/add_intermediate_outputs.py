@@ -14,6 +14,7 @@ from pathlib import Path
 from typing import Dict, Iterable, Tuple
 
 import onnx
+from onnx import helper
 
 
 # Mapping from new user-friendly output names to the tensor names that already
@@ -52,6 +53,7 @@ def _gather_value_infos(graph: onnx.GraphProto) -> Dict[str, onnx.ValueInfoProto
 
 
 def _clone_value_info(template: onnx.ValueInfoProto, new_name: str) -> onnx.ValueInfoProto:
+    """Duplicate the metadata so ONNX runtimes know the shape/dtype of the new output."""
     clone = onnx.ValueInfoProto()
     clone.CopyFrom(template)
     clone.name = new_name
@@ -83,6 +85,15 @@ def promote_tensors(
                 f"Tensor '{source_name}' not found in graph; cannot promote it to an output."
             )
 
+        # Create Identity node to forward the tensor to a user-friendly output name.
+        identity_node = helper.make_node(
+            "Identity",
+            inputs=[source_name],
+            outputs=[new_name],
+            name=f"promote::{new_name}",
+        )
+
+        graph.node.extend([identity_node])
         graph.output.extend([_clone_value_info(template, new_name)])
         existing_outputs.add(new_name)
         promoted += 1
