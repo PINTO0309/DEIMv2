@@ -86,6 +86,8 @@ https://github.com/Intellindust-AI-Lab/DEIMv2/compare/main...PINTO0309:DEIMv2:uv
 
 
 ## 🚀 Updates
+- [x] **\[2026.1.7\]** STA, introduced in DEIMv2, has been integrated into the SOTA distillation library [LightlyTrain](https://github.com/lightly-ai/lightly-train/blob/1fbe09744891727b4b494583ee62f35e7b7b1668/src/lightly_train/_task_models/dinov3_ltdetr_object_detection/dinov3_vit_wrapper.py#L15), demonstrating its practical value and impact in real-world training pipelines. 
+- [x] **\[2026.1.7\]** FP16 Inference Fix: **Use TensorRT ≥ 10.6 to ensure stable execution and correct detection results.** For detailed deployment instructions, please refer to [Deployment](https://github.com/Intellindust-AI-Lab/DEIMv2?tab=readme-ov-file#4-tools).
 - [x] **\[2025.11.3\]** [We have uploaded our models to Hugging Face](https://huggingface.co/Intellindust)! Thanks to NielsRogge!
 - [x] **\[2025.10.28\]** Optimized the attention module in ViT-Tiny, reducing memory usage by half for the S and M models.
 - [x] **\[2025.10.2\]** [DEIMv2 has been integrated into X-AnyLabeling!](https://github.com/Intellindust-AI-Lab/DEIMv2/issues/25#issue-3473960491) Many thanks to the X-AnyLabeling maintainers for making this possible.
@@ -553,6 +555,19 @@ DEIMCriterion:
     trtexec --onnx="model.onnx" --saveEngine="model.engine" --fp16
     ```
 
+⚠️ **TensorRT Version Notes**
+
+- ✅ Recommended: **Use TensorRT ≥ 10.6 for FP16 inference** to ensure stable execution and correct detection results.
+
+- ❗ Known Issue: With TensorRT 10.4, FP16 inference may produce incorrect outputs.
+
+- 🔧 Workarounds for older versions (e.g., 10.4):
+
+  - Run inference in FP32 mode, or
+
+  - Carefully validate the exported engine and end-to-end pipeline to confirm numerical correctness and detection performance.
+
+
 </details>
 
 <details>
@@ -636,7 +651,7 @@ If you use `DEIMv2` or its methods in your work, please cite the following BibTe
 ```
 
 ## 6. Acknowledgement
-Our work is built upon [D-FINE](https://github.com/Peterande/D-FINE), [RT-DETR](https://github.com/lyuwenyu/RT-DETR), [DEIM](https://github.com/ShihuaHuang95/DEIM), and [DINOv3](https://github.com/facebookresearch/dinov3). Thanks for their great work!
+Our work is built upon [LightlyTrain](https://github.com/lightly-ai/lightly-train), [D-FINE](https://github.com/Peterande/D-FINE), [RT-DETR](https://github.com/lyuwenyu/RT-DETR), [DEIM](https://github.com/ShihuaHuang95/DEIM), and [DINOv3](https://github.com/facebookresearch/dinov3). Thanks for their great work!
 
 ✨ Feel free to contribute and reach out if you have any questions! ✨
 
