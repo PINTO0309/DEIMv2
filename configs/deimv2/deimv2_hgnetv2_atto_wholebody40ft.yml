@@ -90,7 +90,7 @@ train_dataloader:
         # right-side <-> left-side
         # right-back <-> left-back
         # hand_left <-> hand_right
-        - {type: RandomHorizontalFlipWithClass, class_pairs: [[9, 15], [10, 14], [11, 13], [27, 28]]}
+        - {type: RandomHorizontalFlipWithClass, class_pairs: [[9, 15], [10, 14], [11, 13], [23, 24], [27, 28], [30, 31], [33, 34]]}
         - {type: Resize, size: [320, 320], }
         - {type: SanitizeBoundingBoxes, min_size: 2}
         - {type: ConvertPILImage, dtype: 'float32', scale: True}
