@@ -1,6 +1,10 @@
 - Copy datasets
+  - wholebody34
     - from: `yolov9/dataset/images` to: `DEIMv2/tools/dataset/wholebody34/images`
     - from: `yolov9/dataset/labels` to: `DEIMv2/tools/dataset/wholebody34/labels`
+  - wholebody40
+    - from: `yolov9/dataset/images` to: `DEIMv2/tools/dataset/wholebody40/images`
+    - from: `yolov9/dataset/labels` to: `DEIMv2/tools/dataset/wholebody40/labels`
 - Make `DEIMv2/tools/dataset/wholebody34/classes.txt`
   <details><summary>click</summary>
     
