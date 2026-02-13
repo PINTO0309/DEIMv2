@@ -1,0 +1,124 @@
+__include__: [
+  '../dataset/wholebody40.yml',
+  '../runtime.yml',
+  '../base/dataloader.yml',
+  '../base/optimizer.yml',
+  '../base/deimv2.yml',
+]
+
+
+output_dir: ./outputs/deimv2_dinov3_x_wholebody40
+
+DEIM:
+  backbone: DINOv3STAs
+
+DINOv3STAs:
+  name: dinov3_vits16plus
+  weights_path: ./ckpts/dinov3_vits16plus_pretrain_lvd1689m-4057cbaa.pth
+  interaction_indexes: [5,8,11]   # only need the [1/8, 1/16, 1/32]
+  finetune: True
+  conv_inplane: 64
+  hidden_dim: 256
+
+HybridEncoder:
+  in_channels: [256, 256, 256]
+  # intra
+  hidden_dim: 256
+  dim_feedforward: 1024
+
+  # cross
+  expansion: 1.25
+  depth_mult: 1.37
+
+DEIMTransformer:
+  num_layers: 6
+  eval_idx: -1
+  num_queries: 1750
+  feat_channels: [256, 256, 256]
+  # reg_scale: 8
+  hidden_dim: 256
+  dim_feedforward: 2048
+
+PostProcessor:
+  num_top_queries: 1750
+
+## DEIM LR-Scheduler
+epoches: 58 # 72 + 2n  # Increase to search for the optimal ema
+
+optimizer:
+  type: AdamW
+  params:
+    -
+      # except norm/bn/bias in self.dinov3
+      params: '^(?=.*.dinov3)(?!.*(?:norm|bn|bias)).*$'
+      lr: 0.00001
+    -
+      # including norm/bn/bias in self.dinov3
+      params: '^(?=.*.dinov3)(?=.*(?:norm|bn|bias)).*$'
+      lr: 0.00001
+      weight_decay: 0.
+    -
+      # including norm/bn/bias except for the self.dinov3
+      params: '^(?=.*(?:sta|encoder|decoder))(?=.*(?:norm|bn|bias)).*$'
+      weight_decay: 0.
+
+  lr: 0.000125 # 0.0005 / 4 * GPUs
+  betas: [0.9, 0.999]
+  weight_decay: 0.00003125 # 0.000125 / 4 * GPUs
+
+## Dense O2O: Mosaic + Mixup + CopyBlend
+train_dataloader:
+  dataset:
+    transforms:
+      ops:
+        # - {type: Mosaic, output_size: 320, rotation_range: 10, translation_range: [0.1, 0.1], scaling_range: [0.5, 1.5],
+        #    probability: 1.0, fill_value: 0, use_cache: True, max_cached_images: 50, random_pop: True}
+        - {type: RandomPhotometricDistort, p: 0.5}
+        - {type: RandomZoomOut, p: 0.5, fill: 0, side_range: [1.0, 1.5]}
+        - {type: RandomIoUCrop, p: 0.8}
+        - {type: SanitizeBoundingBoxes, min_size: 1}
+        # right-front <-> left-front
+        # right-side <-> left-side
+        # right-back <-> left-back
+        # hand_left <-> hand_right
+        - {type: RandomHorizontalFlipWithClass, class_pairs: [[9, 15], [10, 14], [11, 13], [27, 28]]}
+        - {type: Resize, size: [640, 640], }
+        - {type: SanitizeBoundingBoxes, min_size: 1}
+        - {type: ConvertPILImage, dtype: 'float32', scale: True}
+        - {type: Normalize, mean: [0.485, 0.456, 0.406], std: [0.229, 0.224, 0.225]}
+        - {type: ConvertBoxes, fmt: 'cxcywh', normalize: True}
+      policy:
+        # The policy block configures the staged augmentation scheduler used by engine/data/transforms/container.py:57. The loader wraps your ops in Compose, and policy['name'] selects which scheduling routine to run (default, stop_epoch, or stop_sample).
+        # In DEIM configs we rely on stop_epoch (see engine/data/transforms/container.py:77). The dataloader calls set_epoch, so every batch knows the current epoch and the policy can enable/disable transforms dynamically.
+        # Fields for stop_epoch
+        # ops: list of transform class names that the scheduler is allowed to turn on/off (e.g. ['Mosaic', 'RandomPhotometricDistort', ...]). Names must match the actual class names printed when transforms are created.
+        # epoch: either
+        # a single integer → once dataset.epoch >= epoch, transforms listed in ops are skipped; or
+        # a list with three values [no_aug_end, mosaic_end, full_stop] → implements a four-stage schedule (engine/data/transforms/container.py:90).
+        # epoch < no_aug_end: skip all listed ops (pure warmup).
+        # no_aug_end ≤ epoch < mosaic_end: apply listed ops, but Mosaic only fires with mosaic_prob and RandomZoomOut / RandomIoUCrop are suppressed when Mosaic already ran.
+        # mosaic_end ≤ epoch < full_stop: listed ops run every time (no Mosaic special-casing).
+        # epoch ≥ full_stop: listed ops are skipped again for the final no‑augmentation phase.
+        epoch: [4, 29, 50]   # list
+        ops: ['Mosaic', 'RandomPhotometricDistort', 'RandomZoomOut', 'RandomIoUCrop']
+      mosaic_prob: -0.1
+  total_batch_size: 2 # total batch size equals to 32 (4 GPUs * 8 batch)
+  num_workers: 4
+
+  collate_fn:
+    mixup_prob: 0.0
+    mixup_epochs: [4, 29]
+    stop_epoch: 50
+    copyblend_prob: 0.0
+    copyblend_epochs: [4, 50]
+    base_size_repeat: 3
+
+val_dataloader:
+  dataset:
+    transforms:
+      ops:
+        - {type: Resize, size: [640, 640], }
+        - {type: ConvertPILImage, dtype: 'float32', scale: True}
+        - {type: Normalize, mean: [0.485, 0.456, 0.406], std: [0.229, 0.224, 0.225]}
+  total_batch_size: 8 # total batch size equals to 64 (4 GPUs * 16 batch)
+  num_workers: 4
