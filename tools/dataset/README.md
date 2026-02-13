@@ -2,48 +2,100 @@
     - from: `yolov9/dataset/images` to: `DEIMv2/tools/dataset/wholebody34/images`
     - from: `yolov9/dataset/labels` to: `DEIMv2/tools/dataset/wholebody34/labels`
 - Make `DEIMv2/tools/dataset/wholebody34/classes.txt`
-    ```
-    body
-    adult
-    child
-    male
-    female
-    body_with_wheelchair
-    body_with_crutches
-    head
-    front
-    right-front
-    right-side
-    right-back
-    back
-    left-back
-    left-side
-    left-front
-    face
-    eye
-    nose
-    mouth
-    ear
-    collarbone
-    shoulder
-    solar_plexus
-    elbow
-    wrist
-    hand
-    hand_left
-    hand_right
-    abdomen
-    hip_joint
-    knee
-    ankle
-    foot
-    ```
+  <details><summary>click</summary>
+    
+  ```
+  body
+  adult
+  child
+  male
+  female
+  body_with_wheelchair
+  body_with_crutches
+  head
+  front
+  right-front
+  right-side
+  right-back
+  back
+  left-back
+  left-side
+  left-front
+  face
+  eye
+  nose
+  mouth
+  ear
+  collarbone
+  shoulder
+  solar_plexus
+  elbow
+  wrist
+  hand
+  hand_left
+  hand_right
+  abdomen
+  hip_joint
+  knee
+  ankle
+  foot
+  ```
+
+  </details>
+- Make `DEIMv2/tools/dataset/wholebody40/classes.txt`
+  <details><summary>click</summary>
+    
+  ```
+  body
+  adult
+  child
+  male
+  female
+  body_with_wheelchair
+  body_with_crutches
+  head
+  front
+  right_front
+  right_side
+  right_back
+  back
+  left_back
+  left_side
+  left_front
+  face
+  eye
+  nose
+  mouth
+  ear
+  collarbone
+  shoulder
+  shoulder_left
+  shoulder_right
+  solar_plexus
+  elbow
+  elbow_left
+  elbow_right
+  wrist
+  wrist_left
+  wrist_right
+  hand
+  hand_left
+  hand_right
+  abdomen
+  hip_joint
+  knee
+  ankle
+  foot
+  ```
+
+  </details>
 - yolov9 structure to train.txt,val.txt
 
     ```bash
     cd tools/dataset
 
     python yolov9_dataset_to_txt.py --dataset_name wholebody34
+    python yolov9_dataset_to_txt.py --dataset_name wholebody40
     ```
 - yolo to coco
 
@@ -53,6 +105,7 @@
     cd tools/dataset
 
     python yolo2coco.py wholebody34
+    python yolo2coco.py wholebody40
 
     Start to load existing images and annotations from wholebody34
     All necessary files are located at wholebody34
