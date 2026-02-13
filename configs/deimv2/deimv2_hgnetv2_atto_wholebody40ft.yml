@@ -89,6 +89,9 @@ train_dataloader:
         # right-front <-> left-front
         # right-side <-> left-side
         # right-back <-> left-back
+        # shoulder_left <-> shoulder_right
+        # elbow_left <-> elbow_right
+        # wrist_left <-> wrist_right
         # hand_left <-> hand_right
         - {type: RandomHorizontalFlipWithClass, class_pairs: [[9, 15], [10, 14], [11, 13], [23, 24], [27, 28], [30, 31], [33, 34]]}
         - {type: Resize, size: [320, 320], }
