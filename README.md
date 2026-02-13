@@ -11,6 +11,11 @@ curl -LsSf https://astral.sh/uv/install.sh | sh
 uv sync
 source .venv/bin/activate
 export PYTHONWARNINGS="ignore"
+
+or
+
+pip install ai-edge-litert==2.0.2 calflops==0.3.2 coremltools==9.0b1 faster-coco-eval==1.6.7 gdown==5.2.0 numpy==1.26.4 onnx==1.19.0 onnx-graphsurgeon==0.5.8 onnx2tf==1.28.2 onnxruntime==1.23.0 onnxsim==0.4.30 onnxslim==0.1.69 pybind11==3.0.1 pyyaml==6.0.3 scipy==1.15.3 sit4onnx==1.0.10 snc4onnx==1.0.14 sor4onnx==1.0.7 tensorboard==2.20.0 transformers==4.56.2
+sudo apt-get install -y libgl1-mesa-dev libopencv-dev
 ```
 
 ## Differential implementation of optimizations
