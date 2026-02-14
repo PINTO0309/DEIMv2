@@ -31,10 +31,10 @@ DEIMTransformer:
   dim_feedforward: 512
   num_layers: 4  # 4 5 6
   eval_idx: -1  # -2 -3 -4
-  num_queries: 680
+  num_queries: 800
 
 PostProcessor:
-  num_top_queries: 680
+  num_top_queries: 800
 
 ## Optimizer
 optimizer:

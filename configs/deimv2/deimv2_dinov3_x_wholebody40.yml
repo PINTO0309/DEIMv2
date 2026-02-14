@@ -33,14 +33,14 @@ HybridEncoder:
 DEIMTransformer:
   num_layers: 6
   eval_idx: -1
-  num_queries: 680
+  num_queries: 800
   feat_channels: [256, 256, 256]
   # reg_scale: 8
   hidden_dim: 256
   dim_feedforward: 2048
 
 PostProcessor:
-  num_top_queries: 680
+  num_top_queries: 800
 
 ## DEIM LR-Scheduler
 epoches: 58 # 72 + 2n  # Increase to search for the optimal ema

@@ -39,13 +39,13 @@ DEIMTransformer:
 
   num_layers: 3
   eval_idx: -1
-  num_queries: 680
+  num_queries: 800
 
   # FFN
   dim_feedforward: 512
 
 PostProcessor:
-  num_top_queries: 680
+  num_top_queries: 800
 
 optimizer:
   type: AdamW
