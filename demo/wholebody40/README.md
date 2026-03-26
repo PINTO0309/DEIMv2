@@ -75,7 +75,6 @@ uv run python demo/wholebody40/demo_deimv2_onnx_wholebody40_with_edges.py \
 -dgm \
 -dnm \
 -dhm \
--dlr \
 -dtk \
 -dti \
 -dhd
@@ -92,6 +91,5 @@ uv run python demo/wholebody40/demo_deimv2_onnx_wholebody40_with_edges.py \
 -dwk \
 -dgm \
 -dnm \
--dhm \
--dlr
+-dhm
 ```
