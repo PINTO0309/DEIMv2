@@ -68,7 +68,7 @@ options:
 ### Image files
 ```bash
 uv run python demo/wholebody40/demo_deimv2_onnx_wholebody40_with_edges.py \
--m deimv2_dinov3_x_wholebody40_680query_n_batch.onnx \
+-m deimv2_dinov3_x_wholebody40_800query_n_batch.onnx \
 -i images_partial \
 -ep cuda \
 -dwk \
@@ -86,7 +86,7 @@ uv run python demo/wholebody40/demo_deimv2_onnx_wholebody40_with_edges.py \
 ### USBCam or Video files
 ```bash
 uv run python demo/wholebody40/demo_deimv2_onnx_wholebody40_with_edges.py \
--m deimv2_dinov3_x_wholebody40_680query_n_batch.onnx \
+-m deimv2_dinov3_x_wholebody40_800query_n_batch.onnx \
 -v 0 \
 -ep tensorrt \
 -dwk \
