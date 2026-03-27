@@ -68,3 +68,47 @@ python tools/dataset/dataset_shaping_tools/12_make_wholebody40_ins_annotation.py
 ```bash
 python tools/dataset/dataset_shaping_tools/12_make_wholebody40_ins_annotation.py --help
 ```
+
+## `13_render_wholebody40_ins_preview.py`
+
+This script renders segmentation polygons from a COCO-style annotation file onto the corresponding images so you can visually inspect a sample set.
+
+### Default command
+
+```bash
+python tools/dataset/dataset_shaping_tools/13_render_wholebody40_ins_preview.py
+```
+
+### Example: render 100 samples from `val_ins.json`
+
+```bash
+python tools/dataset/dataset_shaping_tools/13_render_wholebody40_ins_preview.py \
+  --ann-json /media/xxxxx/ExtremeSSD/make_wholebody40/wholebody40/annotations/val_ins.json \
+  --images-dir /media/xxxxx/ExtremeSSD/make_wholebody40/wholebody40/images \
+  --output-dir /media/xxxxx/ExtremeSSD/make_wholebody40/wholebody40/val_ins_preview \
+  --limit 100
+```
+
+### Example: render from `instances_trainval2017_person_only_no_crowd.json`
+
+```bash
+python tools/dataset/dataset_shaping_tools/13_render_wholebody40_ins_preview.py \
+  --ann-json /media/xxxxx/ExtremeSSD/make_wholebody40/instances_trainval2017_person_only_no_crowd.json \
+  --images-dir /media/xxxxx/ExtremeSSD/make_wholebody40/wholebody40/images \
+  --output-dir /media/xxxxx/ExtremeSSD/make_wholebody40/wholebody40/trainval_person_preview \
+  --limit 100
+```
+
+### Notes
+
+- Only annotations with non-empty `segmentation` are rendered.
+- The script draws semi-transparent polygons and bounding boxes on top of the original image.
+- Output filenames are preserved, and a `render_manifest.json` file is written to the output directory.
+- You can randomize the selection order with `--shuffle --seed 0`.
+- You can restrict rendering to specific categories with `--category-ids 0`.
+
+### Help
+
+```bash
+python tools/dataset/dataset_shaping_tools/13_render_wholebody40_ins_preview.py --help
+```
