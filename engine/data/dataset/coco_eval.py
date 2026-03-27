@@ -20,15 +20,24 @@ __all__ = ['CocoEvaluator',]
 
 @register()
 class CocoEvaluator(object):
-    def __init__(self, coco_gt, iou_types):
+    __share__ = ['segm_eval_category_ids', 'segm_ignore_missing_masks']
+
+    def __init__(self, coco_gt, iou_types, segm_eval_category_ids=None, segm_ignore_missing_masks=True):
         assert isinstance(iou_types, (list, tuple))
-        coco_gt = copy.deepcopy(coco_gt)
-        self.coco_gt : COCO = coco_gt
+        if isinstance(coco_gt, dict):
+            self.coco_gt = {k: copy.deepcopy(v) for k, v in coco_gt.items()}
+        else:
+            self.coco_gt = copy.deepcopy(coco_gt)
         self.iou_types = iou_types
+        self.segm_eval_category_ids = [] if segm_eval_category_ids is None else list(segm_eval_category_ids)
+        self.segm_ignore_missing_masks = segm_ignore_missing_masks
 
         self.coco_eval = {}
         for iou_type in iou_types:
-            self.coco_eval[iou_type] = COCOeval_faster(coco_gt, iouType=iou_type, print_function=print, separate_eval=True)
+            coco_gt_iou = self._get_coco_gt_for_iou(iou_type)
+            self.coco_eval[iou_type] = COCOeval_faster(coco_gt_iou, iouType=iou_type, print_function=print, separate_eval=True)
+            if iou_type == 'segm' and self.segm_eval_category_ids:
+                self.coco_eval[iou_type].params.catIds = list(self.segm_eval_category_ids)
 
         self.img_ids = []
         self.eval_imgs = {k: [] for k in iou_types}
@@ -36,9 +45,20 @@ class CocoEvaluator(object):
     def cleanup(self):
         self.coco_eval = {}
         for iou_type in self.iou_types:
-            self.coco_eval[iou_type] = COCOeval_faster(self.coco_gt, iouType=iou_type, print_function=print, separate_eval=True)
+            coco_gt_iou = self._get_coco_gt_for_iou(iou_type)
+            self.coco_eval[iou_type] = COCOeval_faster(coco_gt_iou, iouType=iou_type, print_function=print, separate_eval=True)
+            if iou_type == 'segm' and self.segm_eval_category_ids:
+                self.coco_eval[iou_type].params.catIds = list(self.segm_eval_category_ids)
         self.img_ids = []
         self.eval_imgs = {k: [] for k in self.iou_types}
+
+    def _get_coco_gt_for_iou(self, iou_type):
+        if isinstance(self.coco_gt, dict):
+            if iou_type in self.coco_gt:
+                return self.coco_gt[iou_type]
+            if 'bbox' in self.coco_gt:
+                return self.coco_gt['bbox']
+        return self.coco_gt
 
 
     def update(self, predictions):
@@ -48,11 +68,12 @@ class CocoEvaluator(object):
         for iou_type in self.iou_types:
             results = self.prepare(predictions, iou_type)
             coco_eval = self.coco_eval[iou_type]
+            coco_gt_iou = self._get_coco_gt_for_iou(iou_type)
 
             # suppress pycocotools prints
             with open(os.devnull, 'w') as devnull:
                 with contextlib.redirect_stdout(devnull):
-                    coco_dt = self.coco_gt.loadRes(results) if results else COCO()
+                    coco_dt = coco_gt_iou.loadRes(results) if results else COCO()
                     coco_eval.cocoDt = coco_dt
                     coco_eval.params.imgIds = list(img_ids)
                     coco_eval.evaluate()
@@ -120,11 +141,20 @@ class CocoEvaluator(object):
             scores = prediction["scores"]
             labels = prediction["labels"]
             masks = prediction["masks"]
+            if self.segm_eval_category_ids:
+                keep = torch.zeros_like(labels, dtype=torch.bool)
+                for cat_id in self.segm_eval_category_ids:
+                    keep |= labels == cat_id
+                if not keep.any():
+                    continue
+                scores = scores[keep]
+                labels = labels[keep]
+                masks = masks[keep]
 
             masks = masks > 0.5
 
-            scores = prediction["scores"].tolist()
-            labels = prediction["labels"].tolist()
+            scores = scores.tolist()
+            labels = labels.tolist()
 
             rles = [
                 mask_util.encode(np.array(mask[0, :, :, np.newaxis], dtype=np.uint8, order="F"))[0]

@@ -24,7 +24,7 @@ from ..core import register
 class DEIMCriterion(nn.Module):
     """ This class computes the loss for DEIM.
     """
-    __share__ = ['num_classes', ]
+    __share__ = ['num_classes', 'mask_category_ids']
     __inject__ = ['matcher', ]
 
     def __init__(self, \
@@ -35,6 +35,7 @@ class DEIMCriterion(nn.Module):
         gamma=2.0,
         num_classes=80,
         reg_max=32,
+        mask_category_ids=None,
         boxes_weight_format=None,
         share_matched_indices=False,
         mal_alpha=None,
@@ -61,6 +62,7 @@ class DEIMCriterion(nn.Module):
         self.fgl_targets, self.fgl_targets_dn = None, None
         self.own_targets, self.own_targets_dn = None, None
         self.reg_max = reg_max
+        self.mask_category_ids = [] if mask_category_ids is None else list(mask_category_ids)
         self.num_pos, self.num_neg = None, None
         self.mal_alpha = mal_alpha
         self.use_uni_set = use_uni_set
@@ -214,6 +216,50 @@ class DEIMCriterion(nn.Module):
 
         return losses
 
+    def loss_masks(self, outputs, targets, indices, num_boxes):
+        if 'pred_masks' not in outputs:
+            return {}
+
+        zero = outputs['pred_masks'].sum() * 0
+
+        src_masks_list = []
+        target_masks = []
+        valid_masks = []
+        for batch_idx, (target, (matched_pred_idx, matched_target_idx)) in enumerate(zip(targets, indices)):
+            if len(matched_target_idx) == 0:
+                continue
+            if 'masks' not in target or 'mask_valid' not in target:
+                raise KeyError('Body-only mask supervision requires `masks` and `mask_valid` in targets.')
+            valid = target['mask_valid'][matched_target_idx]
+            if valid.numel() == 0 or not valid.any():
+                continue
+            src_masks_list.append(outputs['pred_masks'][batch_idx, matched_pred_idx[valid]])
+            target_masks.append(
+                target['masks'][matched_target_idx[valid]]
+            )
+            valid_masks.append(valid.sum())
+
+        if not src_masks_list:
+            return {'loss_mask_bce': zero, 'loss_mask_dice': zero}
+
+        src_masks = torch.cat(src_masks_list, dim=0)
+        target_masks = torch.cat(target_masks, dim=0)
+        target_masks = F.interpolate(
+            target_masks[:, None].float(),
+            size=src_masks.shape[-2:],
+            mode='nearest',
+        )[:, 0].to(device=src_masks.device, dtype=src_masks.dtype)
+
+        num_masks = torch.as_tensor([sum(int(v.item()) for v in valid_masks)], dtype=torch.float, device=src_masks.device)
+        if is_dist_available_and_initialized():
+            torch.distributed.all_reduce(num_masks)
+        num_masks = torch.clamp(num_masks / get_world_size(), min=1).item()
+
+        loss_mask_bce = F.binary_cross_entropy_with_logits(src_masks, target_masks, reduction='none')
+        loss_mask_bce = loss_mask_bce.flatten(1).mean(1).sum() / num_masks
+        loss_mask_dice = self.sigmoid_dice_loss(src_masks, target_masks, num_masks)
+        return {'loss_mask_bce': loss_mask_bce, 'loss_mask_dice': loss_mask_dice}
+
     def _get_src_permutation_idx(self, indices):
         # permute predictions following indices
         batch_idx = torch.cat([torch.full_like(src, i) for i, (src, _) in enumerate(indices)])
@@ -259,6 +305,7 @@ class DEIMCriterion(nn.Module):
             'vfl': self.loss_labels_vfl,
             'mal': self.loss_labels_mal,
             'local': self.loss_local,
+            'masks': self.loss_masks,
         }
         assert loss in loss_map, f'do you really want to compute {loss} loss?'
         return loss_map[loss](outputs, targets, indices, num_boxes, **kwargs)
@@ -477,6 +524,15 @@ class DEIMCriterion(nn.Module):
             loss = loss.sum()
 
         return loss
+
+    @staticmethod
+    def sigmoid_dice_loss(inputs, targets, num_boxes, eps=1e-6):
+        inputs = inputs.sigmoid().flatten(1)
+        targets = targets.flatten(1)
+        numerator = 2 * (inputs * targets).sum(1)
+        denominator = inputs.sum(1) + targets.sum(1)
+        loss = 1 - (numerator + eps) / (denominator + eps)
+        return loss.sum() / num_boxes
 
     def get_gradual_steps(self, outputs):
         num_layers = len(outputs['aux_outputs']) + 1 if 'aux_outputs' in outputs else 1

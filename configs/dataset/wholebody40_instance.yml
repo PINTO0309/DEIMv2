@@ -1,0 +1,44 @@
+task: detection
+
+evaluator:
+  type: CocoEvaluator
+  iou_types: ['bbox', 'segm']
+
+num_classes: 41 # classes + 1
+remap_mscoco_category: False # custom dataset -> False
+mask_category_ids: [0] # body only
+segm_eval_category_ids: [0] # body only
+segm_ignore_missing_masks: True
+
+train_dataloader:
+  type: DataLoader
+  dataset:
+    type: CocoDetection
+    img_folder: ./tools/dataset/wholebody40/images/
+    ann_file: ./tools/dataset/wholebody40/annotations/train.json
+    return_masks: True
+    transforms:
+      type: Compose
+      ops: ~
+  shuffle: True
+  num_workers: 4
+  drop_last: True
+  collate_fn:
+    type: BatchImageCollateFunction
+
+
+val_dataloader:
+  type: DataLoader
+  dataset:
+    type: CocoDetection
+    img_folder: ./tools/dataset/wholebody40/images/
+    ann_file: ./tools/dataset/wholebody40/annotations/val.json
+    return_masks: True
+    transforms:
+      type: Compose
+      ops: ~
+  shuffle: False
+  num_workers: 4
+  drop_last: False
+  collate_fn:
+    type: BatchImageCollateFunction

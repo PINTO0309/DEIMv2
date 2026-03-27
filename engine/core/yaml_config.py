@@ -98,9 +98,19 @@ class YAMLConfig(BaseConfig):
     def evaluator(self, ):
         if self._evaluator is None and 'evaluator' in self.yaml_cfg:
             if self.yaml_cfg['evaluator']['type'] == 'CocoEvaluator':
-                from ..data import get_coco_api_from_dataset
-                base_ds = get_coco_api_from_dataset(self.val_dataloader.dataset)
-                self._evaluator = create('evaluator', self.global_cfg, coco_gt=base_ds)
+                from ..data import get_coco_api_from_dataset, get_coco_api_from_dataset_for_segm
+                bbox_ds = get_coco_api_from_dataset(self.val_dataloader.dataset)
+                iou_types = self.yaml_cfg['evaluator'].get('iou_types', [])
+                if 'segm' in iou_types:
+                    segm_ds = get_coco_api_from_dataset_for_segm(
+                        self.val_dataloader.dataset,
+                        category_ids=self.yaml_cfg.get('segm_eval_category_ids', None),
+                        ignore_missing_masks=self.yaml_cfg.get('segm_ignore_missing_masks', True),
+                    )
+                    coco_gt = {'bbox': bbox_ds, 'segm': segm_ds}
+                else:
+                    coco_gt = bbox_ds
+                self._evaluator = create('evaluator', self.global_cfg, coco_gt=coco_gt)
             else:
                 raise NotImplementedError(f"{self.yaml_cfg['evaluator']['type']}")
         return super().evaluator

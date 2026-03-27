@@ -11,6 +11,6 @@ from .coco_dataset import (
     mscoco_label2category,
 )
 from .coco_eval import CocoEvaluator
-from .coco_utils import get_coco_api_from_dataset
+from .coco_utils import get_coco_api_from_dataset, get_coco_api_from_dataset_for_segm
 from .voc_detection import VOCDetection
 from .voc_eval import VOCEvaluator

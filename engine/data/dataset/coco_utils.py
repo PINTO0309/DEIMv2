@@ -11,6 +11,7 @@ import torchvision
 import torchvision.transforms.functional as TVF
 import faster_coco_eval.core.mask as coco_mask
 from faster_coco_eval import COCO
+import copy
 
 
 def convert_coco_poly_to_mask(segmentations, height, width):
@@ -189,3 +190,38 @@ def get_coco_api_from_dataset(dataset):
     if isinstance(dataset, torchvision.datasets.CocoDetection):
         return dataset.coco
     return convert_to_coco_api(dataset)
+
+
+def get_coco_api_from_dataset_for_segm(dataset, category_ids=None, ignore_missing_masks=False):
+    for _ in range(10):
+        if isinstance(dataset, torchvision.datasets.CocoDetection):
+            break
+        if isinstance(dataset, torch.utils.data.Subset):
+            dataset = dataset.dataset
+
+    if not isinstance(dataset, torchvision.datasets.CocoDetection):
+        return convert_to_coco_api(dataset)
+
+    coco_gt = copy.deepcopy(dataset.coco)
+    annotations = coco_gt.dataset.get('annotations', [])
+    images = coco_gt.dataset.get('images', [])
+    categories = coco_gt.dataset.get('categories', [])
+
+    if category_ids is not None:
+        category_ids = set(category_ids)
+        annotations = [ann for ann in annotations if ann.get('category_id') in category_ids]
+        categories = [cat for cat in categories if cat.get('id') in category_ids]
+
+    if ignore_missing_masks:
+        annotations = [ann for ann in annotations if ann.get('segmentation')]
+
+    image_ids = {ann['image_id'] for ann in annotations}
+    images = [img for img in images if img.get('id') in image_ids]
+
+    coco_gt.dataset = {
+        'images': images,
+        'categories': categories,
+        'annotations': annotations,
+    }
+    coco_gt.createIndex()
+    return coco_gt

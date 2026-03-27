@@ -69,32 +69,39 @@ class PostProcessor(nn.Module):
     # def forward(self, outputs, orig_target_sizes):
     def forward(self, outputs, orig_target_sizes: torch.Tensor=None):
         logits, boxes = outputs['pred_logits'], outputs['pred_boxes']
+        pred_masks = outputs.get('pred_masks')
         bbox_pred = self.box_cxcywh_to_xyxy(boxes)
         if orig_target_sizes is not None:
             bbox_pred *= orig_target_sizes.repeat(1, 2).unsqueeze(1)
 
         if self.use_focal_loss:
             scores = F.sigmoid(logits)
-            scores, index = torch.topk(scores.flatten(1), self.num_top_queries, dim=-1)
+            scores, flat_index = torch.topk(scores.flatten(1), self.num_top_queries, dim=-1)
             if orig_target_sizes is None:
                 scores = scores.unsqueeze(-1)
-            index = index.unsqueeze(-1)
-            labels = mod(index, self.num_classes)
-            index = index // self.num_classes
-            boxes = bbox_pred.gather(dim=1, index=index.repeat(1, 1, bbox_pred.shape[-1]))
+            labels = mod(flat_index, self.num_classes)
+            query_index = flat_index // self.num_classes
+            boxes = bbox_pred.gather(dim=1, index=query_index.unsqueeze(-1).repeat(1, 1, bbox_pred.shape[-1]))
 
         else:
             scores = F.softmax(logits)[:, :, :-1]
             scores, labels = scores.max(dim=-1)
             if scores.shape[1] > self.num_top_queries:
-                scores, index = torch.topk(scores, self.num_top_queries, dim=-1)
-                labels = torch.gather(labels, dim=1, index=index)
-                boxes = torch.gather(boxes, dim=1, index=index.unsqueeze(-1).tile(1, 1, boxes.shape[-1]))
+                scores, query_index = torch.topk(scores, self.num_top_queries, dim=-1)
+                labels = torch.gather(labels, dim=1, index=query_index)
+                boxes = torch.gather(bbox_pred, dim=1, index=query_index.unsqueeze(-1).tile(1, 1, bbox_pred.shape[-1]))
+            else:
+                query_index = torch.arange(scores.shape[1], device=logits.device).unsqueeze(0).expand(scores.shape[0], -1)
+                boxes = bbox_pred
 
         if self.deploy_mode:
             if orig_target_sizes is not None:
                 return labels, boxes, scores
             else:
+                if labels.dim() == 2:
+                    labels = labels.unsqueeze(-1)
+                if scores.dim() == 2:
+                    scores = scores.unsqueeze(-1)
                 return torch.cat([labels, boxes, scores], dim=2)
 
         if self.remap_mscoco_category:
@@ -108,8 +115,19 @@ class PostProcessor(nn.Module):
             scores = scores.squeeze(-1)
 
         results = []
-        for lab, box, sco in zip(labels, boxes, scores):
+        for batch_idx, (lab, box, sco) in enumerate(zip(labels, boxes, scores)):
             result = dict(labels=lab, boxes=box, scores=sco)
+            if pred_masks is not None:
+                mask_logits = pred_masks[batch_idx, query_index[batch_idx]].unsqueeze(1)
+                if orig_target_sizes is not None:
+                    orig_w, orig_h = orig_target_sizes[batch_idx].tolist()
+                    mask_logits = F.interpolate(
+                        mask_logits,
+                        size=(int(orig_h), int(orig_w)),
+                        mode='bilinear',
+                        align_corners=False,
+                    )
+                result['masks'] = mask_logits.sigmoid()
             results.append(result)
 
         return results

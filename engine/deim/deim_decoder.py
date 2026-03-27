@@ -215,7 +215,7 @@ class TransformerDecoder(nn.Module):
             output_detach = output.detach()
 
         return torch.stack(dec_out_bboxes), torch.stack(dec_out_logits), \
-               torch.stack(dec_out_pred_corners), torch.stack(dec_out_refs), pre_bboxes, pre_scores
+               torch.stack(dec_out_pred_corners), torch.stack(dec_out_refs), pre_bboxes, pre_scores, output
 
 
 @register()
@@ -249,6 +249,7 @@ class DEIMTransformer(nn.Module):
                  reg_scale=4.,
                  layer_scale=1,
                  mlp_act='relu',
+                 mask_feature_level=0,
                  use_gateway=True,
                  share_bbox_head=False,
                  share_score_head=False,
@@ -272,6 +273,7 @@ class DEIMTransformer(nn.Module):
         self.eval_spatial_size = eval_spatial_size
         self.aux_loss = aux_loss
         self.reg_max = reg_max
+        self.mask_feature_level = mask_feature_level
 
         assert query_select_method in ('default', 'one2many', 'agnostic'), ''
         assert cross_attn_method in ('default', 'discrete'), ''
@@ -314,6 +316,12 @@ class DEIMTransformer(nn.Module):
         self.enc_bbox_head = MLP(hidden_dim, hidden_dim, 4, 3, act=mlp_act)
 
         self.query_pos_head = MLP(4, hidden_dim, hidden_dim, 3, act=mlp_act)
+        self.mask_embed_head = MLP(hidden_dim, hidden_dim, hidden_dim, 3, act=mlp_act)
+        self.mask_feature_head = nn.Sequential(OrderedDict([
+            ('conv', nn.Conv2d(hidden_dim, hidden_dim, 3, padding=1, bias=False)),
+            ('norm', nn.BatchNorm2d(hidden_dim)),
+            ('act', get_activation(activation)),
+        ]))
 
         # decoder head
         self.pre_bbox_head = MLP(hidden_dim, hidden_dim, 4, 3, act=mlp_act)
@@ -369,9 +377,16 @@ class DEIMTransformer(nn.Module):
         init.xavier_uniform_(self.query_pos_head.layers[0].weight)
         init.xavier_uniform_(self.query_pos_head.layers[1].weight)
         init.xavier_uniform_(self.query_pos_head.layers[-1].weight)
+        init.xavier_uniform_(self.mask_embed_head.layers[0].weight)
+        init.xavier_uniform_(self.mask_embed_head.layers[1].weight)
+        init.xavier_uniform_(self.mask_embed_head.layers[-1].weight)
         for m, in_channels in zip(self.input_proj, feat_channels):
             if in_channels != self.hidden_dim:
                 init.xavier_uniform_(m[0].weight)
+
+    def _get_mask_logits(self, query_features: torch.Tensor, mask_features: torch.Tensor) -> torch.Tensor:
+        mask_embed = self.mask_embed_head(query_features)
+        return torch.einsum('bqc,bchw->bqhw', mask_embed, mask_features)
 
     def _build_input_proj_layer(self, feat_channels):
         self.input_proj = nn.ModuleList()
@@ -523,7 +538,14 @@ class DEIMTransformer(nn.Module):
 
     def forward(self, feats, targets=None):
         # input projection and embedding
+        if not 0 <= self.mask_feature_level < len(feats):
+            upper_bound = len(feats) - 1
+            raise ValueError(
+                f'Invalid mask_feature_level={self.mask_feature_level}. '
+                f'Received {len(feats)} feature levels, expected index range [0, {upper_bound}].'
+            )
         memory, spatial_shapes = self._get_encoder_input(feats)
+        mask_features = self.mask_feature_head(feats[self.mask_feature_level])
 
         # prepare denoising training
         if self.training and self.num_denoising > 0:
@@ -543,7 +565,7 @@ class DEIMTransformer(nn.Module):
             self._get_decoder_input(memory, spatial_shapes, denoising_logits, denoising_bbox_unact)
 
         # decoder
-        out_bboxes, out_logits, out_corners, out_refs, pre_bboxes, pre_logits = self.decoder(
+        out_bboxes, out_logits, out_corners, out_refs, pre_bboxes, pre_logits, out_queries = self.decoder(
             init_ref_contents,
             init_ref_points_unact,
             memory,
@@ -568,12 +590,15 @@ class DEIMTransformer(nn.Module):
 
             dn_out_corners, out_corners = torch.split(out_corners, dn_meta['dn_num_split'], dim=2)
             dn_out_refs, out_refs = torch.split(out_refs, dn_meta['dn_num_split'], dim=2)
+            _, out_queries = torch.split(out_queries, dn_meta['dn_num_split'], dim=1)
 
         if self.training:
             out = {'pred_logits': out_logits[-1], 'pred_boxes': out_bboxes[-1], 'pred_corners': out_corners[-1],
-                   'ref_points': out_refs[-1], 'up': self.up, 'reg_scale': self.reg_scale}
+                   'ref_points': out_refs[-1], 'up': self.up, 'reg_scale': self.reg_scale,
+                   'pred_masks': self._get_mask_logits(out_queries, mask_features)}
         else:
-            out = {'pred_logits': out_logits[-1], 'pred_boxes': out_bboxes[-1]}
+            out = {'pred_logits': out_logits[-1], 'pred_boxes': out_bboxes[-1],
+                   'pred_masks': self._get_mask_logits(out_queries, mask_features)}
 
         if self.training and self.aux_loss:
             out['aux_outputs'] = self._set_aux_loss2(out_logits[:-1], out_bboxes[:-1], out_corners[:-1], out_refs[:-1],

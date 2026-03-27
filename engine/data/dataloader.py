@@ -19,6 +19,7 @@ import random
 from functools import partial
 
 from ..core import register
+from ._misc import convert_to_tv_tensor
 torchvision.disable_beta_transforms_warning()
 from copy import deepcopy
 from PIL import Image, ImageDraw
@@ -360,7 +361,11 @@ class BatchImageCollateFunction(BaseCollateFunction):
             images = F.interpolate(images, size=sz)
             if 'masks' in targets[0]:
                 for tg in targets:
-                    tg['masks'] = F.interpolate(tg['masks'], size=sz, mode='nearest')
-                raise NotImplementedError('')
+                    masks = tg['masks']
+                    if masks.numel() == 0:
+                        tg['masks'] = convert_to_tv_tensor(masks, 'masks')
+                        continue
+                    masks = F.interpolate(masks[:, None].float(), size=sz, mode='nearest')[:, 0] > 0.5
+                    tg['masks'] = convert_to_tv_tensor(masks, 'masks')
 
         return images, targets
