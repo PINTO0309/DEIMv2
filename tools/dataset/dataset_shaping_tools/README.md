@@ -11,6 +11,12 @@ This script generates:
 - `val_ins.json`
 - `merge_person_masks_report.json`
 
+These generated files are intended to be used as follows in the instance segmentation pipeline:
+
+- `train_ins.json` for training mask supervision
+- `val.json` for bbox validation
+- `val_ins.json` for segm validation
+
 It copies high-quality person `segmentation` annotations from MS-COCO person-only annotations into the body class (`category_id=0`) of the wholebody40 COCO annotations.
 
 ### What the script does
@@ -27,6 +33,7 @@ It copies high-quality person `segmentation` annotations from MS-COCO person-onl
   - `segmentation: []`
   - `area: 0`
 - Writes a JSON report with matching statistics
+- Supports split validation GT usage, where bbox metrics should keep using `val.json` while segm metrics use `val_ins.json`
 
 ### Default command
 

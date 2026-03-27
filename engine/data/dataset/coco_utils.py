@@ -225,3 +225,31 @@ def get_coco_api_from_dataset_for_segm(dataset, category_ids=None, ignore_missin
     }
     coco_gt.createIndex()
     return coco_gt
+
+
+def get_coco_api_from_annotation_file(ann_file, category_ids=None, ignore_missing_masks=False):
+    coco_gt = COCO(ann_file)
+    coco_gt = copy.deepcopy(coco_gt)
+
+    annotations = coco_gt.dataset.get('annotations', [])
+    images = coco_gt.dataset.get('images', [])
+    categories = coco_gt.dataset.get('categories', [])
+
+    if category_ids is not None:
+        category_ids = set(category_ids)
+        annotations = [ann for ann in annotations if ann.get('category_id') in category_ids]
+        categories = [cat for cat in categories if cat.get('id') in category_ids]
+
+    if ignore_missing_masks:
+        annotations = [ann for ann in annotations if ann.get('segmentation')]
+
+    image_ids = {ann['image_id'] for ann in annotations}
+    images = [img for img in images if img.get('id') in image_ids]
+
+    coco_gt.dataset = {
+        'images': images,
+        'categories': categories,
+        'annotations': annotations,
+    }
+    coco_gt.createIndex()
+    return coco_gt

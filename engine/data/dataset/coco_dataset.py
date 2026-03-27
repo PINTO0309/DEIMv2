@@ -30,7 +30,8 @@ class CocoDetection(torchvision.datasets.CocoDetection, DetDataset):
     __share__ = ['remap_mscoco_category', 'mask_category_ids', 'segm_eval_category_ids']
 
     def __init__(self, img_folder, ann_file, transforms, return_masks=False,
-                 remap_mscoco_category=False, mask_category_ids=None, segm_eval_category_ids=None):
+                 remap_mscoco_category=False, mask_category_ids=None, segm_eval_category_ids=None,
+                 segm_ann_file=None):
         super(CocoDetection, self).__init__(img_folder, ann_file)
         self._transforms = transforms
         self.prepare = ConvertCocoPolysToMask(
@@ -40,6 +41,7 @@ class CocoDetection(torchvision.datasets.CocoDetection, DetDataset):
         )
         self.img_folder = img_folder
         self.ann_file = ann_file
+        self.segm_ann_file = segm_ann_file
         self.return_masks = return_masks
         self.remap_mscoco_category = remap_mscoco_category
         self.mask_category_ids = None if mask_category_ids is None else list(mask_category_ids)

@@ -32,6 +32,8 @@
 
 ## 追加した設定
 - `configs/dataset/wholebody40_instance.yml`
+  - `train_dataloader.dataset.ann_file` は `train_ins.json` を参照し、body mask supervision を学習に載せる。
+  - validation では `ann_file: val.json` を bbox GT に使い、`segm_ann_file: val_ins.json` を segm GT に使う。
   - `return_masks: True` と `['bbox', 'segm']` の評価を有効にする。
   - `mask_category_ids: [0]` を追加し、body-only mask supervision / segm evaluation を指定する。
   - `segm_eval_category_ids: [0]` と `segm_ignore_missing_masks: True` を追加し、sparse body mask validation を許容する。
@@ -108,10 +110,18 @@
 
 ### 評価指標との対応
 - `bbox` AP:
-  - 全 40 クラス、全 annotation を対象に計算する。
+  - validation の `val.json` を使い、全 40 クラス、全 annotation を対象に計算する。
 - `segm` AP:
-  - `classid=0` のうち、mask 付き body annotation の subset のみを対象に計算する。
+  - validation の `val_ins.json` を使い、`classid=0` のうち、mask 付き body annotation の subset のみを対象に計算する。
 - したがって、この設定で学習したモデルは「40 クラス検出モデル + body-only instance segmentation モデル」と解釈するのが正しい。
+
+### `train_ins.json` / `val_ins.json` の使い分け
+- instance segmentation 学習では、学習用 annotation は `train_ins.json` を使う。
+- validation は GT を分離する。
+  - `bbox` 評価: `val.json`
+  - `segm` 評価: `val_ins.json`
+- この分離により、`val_ins.json` に含まれる non-body / unmatched body の `area: 0` が `bbox` の area-based 指標を汚染しない。
+- `val_ins.json` は body mask 付き subset の segm 評価専用 GT として扱う。
 
 ## 前提条件
 - body の正解 instance mask は COCO polygon 形式で用意されている前提とする。
