@@ -84,9 +84,9 @@ python tools/dataset/dataset_shaping_tools/13_render_wholebody40_ins_preview.py
 
 ```bash
 python tools/dataset/dataset_shaping_tools/13_render_wholebody40_ins_preview.py \
---ann-json /media/xxxxx/ExtremeSSD/make_wholebody40/wholebody40/annotations/val_ins.json \
+--ann-json /media/xxxxx/ExtremeSSD/make_wholebody40/val_ins.json \
 --images-dir /media/xxxxx/ExtremeSSD/make_wholebody40/wholebody40/images \
---output-dir /media/xxxxx/ExtremeSSD/make_wholebody40/wholebody40/val_ins_preview \
+--output-dir /media/xxxxx/ExtremeSSD/make_wholebody40/val_ins_preview \
 --limit 100
 ```
 
@@ -96,7 +96,7 @@ python tools/dataset/dataset_shaping_tools/13_render_wholebody40_ins_preview.py 
 python tools/dataset/dataset_shaping_tools/13_render_wholebody40_ins_preview.py \
 --ann-json /media/xxxxx/ExtremeSSD/make_wholebody40/instances_trainval2017_person_only_no_crowd.json \
 --images-dir /media/xxxxx/ExtremeSSD/make_wholebody40/wholebody40/images \
---output-dir /media/xxxxx/ExtremeSSD/make_wholebody40/wholebody40/trainval_person_preview \
+--output-dir /media/xxxxx/ExtremeSSD/make_wholebody40/trainval_person_preview \
 --limit 100
 ```
 
