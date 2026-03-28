@@ -180,6 +180,93 @@
 2. `segm AP75`
 3. `bbox AP` 非劣化
 
+## `-t last_full_epoch.pth` を使ったファインチューニングの整理
+
+### 結論
+
+- 今回追加したパラメータが未反映の古い checkpoint を `-t last_full_epoch.pth` で指定し、current config 側で今回追加したパラメータを有効化して fine-tuning することは可能。
+- ただしこれは `resume` ではなく `tuning` であり、復元されるのは model の一致部分の重みだけ。
+- optimizer、EMA、scaler、scheduler、resume metadata は引き継がれない。
+- 今回の実装後に保存された新形式 checkpoint を、さらに `-t` で使うケースには現時点で制約がある。
+
+### `tuning` と `resume` の違い
+
+- `resume`
+  - 学習状態をそのまま再開する経路。
+  - model だけでなく optimizer、EMA、scaler、scheduler、loader 状態、RNG 状態まで復元する。
+  - 現在の実装では `DEIMTransformer` と `DEIMCriterion` の追加パラメータも checkpoint から復元対象。
+
+- `tuning`
+  - 学習状態の再開ではなく、model 重みの流用から新しい学習を開始する経路。
+  - current config で model / criterion / optimizer を新規構築した上で、checkpoint の model 重みだけ部分ロードする。
+  - そのため、今回追加した loss 有効化フラグや weight は checkpoint 側ではなく current config 側の値が使われる。
+
+### 古い checkpoint から fine-tuning できる理由
+
+- `-t` は current config を先に読んで model を current 構成で構築する。
+- その後、checkpoint から `model` または `ema.module` の state_dict を取り出し、一致する key と shape の重みだけを流し込む。
+- 古い checkpoint には今回追加した以下の重みが存在しない:
+  - `contour_embed_head.*`
+  - `contour_feature_head.*`
+  - `distance_embed_head.*`
+  - `distance_feature_head.*`
+- これらは missing key 扱いになり、current config で生成された初期値のまま学習開始する。
+- 既存の backbone / encoder / decoder / main `pred_masks` 経路は重みを継承できるため、追加 branch だけを新規学習する形で fine-tuning できる。
+
+### current config 側で有効化してよい項目
+
+- `DEIMTransformer.use_contour_aux_head`
+- `DEIMTransformer.use_distance_aux_head`
+- `DEIMTransformer.aux_mask_feature_level`
+- `DEIMCriterion.use_boundary_aware_loss`
+- `DEIMCriterion.boundary_aware_width`
+- `DEIMCriterion.boundary_aware_weight`
+- `DEIMCriterion.use_contour_detection`
+- `DEIMCriterion.use_distance_transform`
+- `DEIMCriterion.distance_transform_steps`
+- `DEIMCriterion.weight_dict` の追加 loss weight
+
+上記は `tuning` では checkpoint から復元する対象ではなく、current config で新しく有効化される。
+
+### 実運用上の意味
+
+- 古い baseline の `last_full_epoch.pth` を使って、新しい aux head と新しい loss を入れた構成へ移行することは可能。
+- その場合の学習開始点は次のように分かれる:
+  - 既存本体: 旧 checkpoint の重みを継承
+  - 新規 aux head: ランダム初期化
+  - 新規 loss 設定: current config の値を使用
+
+### 現時点の制約
+
+- 今回の resume 改善で `state_dict` に `_extra_state` が入るようになった。
+- しかし `tuning` 側の部分ロード処理は、state_dict の value を tensor 前提で比較している。
+- そのため、新形式 checkpoint に含まれる `_extra_state` のような dict value をそのまま `-t` に渡すと、現状の実装では例外になる可能性がある。
+- つまり、現時点で安全に想定できるのは:
+  - 今回追加前の古い checkpoint を `-t` するケース
+- 現時点で未対処の制約があるのは:
+  - 今回追加後の新形式 checkpoint をさらに `-t` するケース
+
+### 推奨運用
+
+- 旧 baseline checkpoint から新構成へ移行したい場合:
+  - `-t old_last_full_epoch.pth` を使う
+  - current config で今回追加した機能を明示的に有効化する
+  - 新規 aux head はランダム初期化から学習される前提で使う
+
+- 完全再開したい場合:
+  - `-r` を使う
+  - checkpoint 保存時と同じ config を使う
+
+- 新形式 checkpoint を再度 `-t` したい場合:
+  - 現状では安全性未保証
+  - `tuning` 側が `_extra_state` のような non-tensor state を無視できるようにしてから運用する
+
+### 追加で確認すべきこと
+
+- `tuning` 経路で `_extra_state` を含む state_dict を安全に処理できるようにするか
+- `-t` で読み込んだ際の missing key 一覧をログに出し、新規 aux head のみ missing であることを確認できるようにするか
+- `old baseline -> new aux config` の移行を正式運用にするなら、推奨コマンド例を別途記載するか
+
 ## 進捗メモ
 
 - decoder 共通基盤: 実装済み
