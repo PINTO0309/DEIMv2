@@ -41,6 +41,14 @@
   - DINOv3-X + wholebody40 向けの instance segmentation 学習設定。
   - batch size 1、低めの学習率、MixUp 無効、CopyBlend 無効、Mosaic 無効を前提にする。
   - `DEIMTransformer.mask_feature_level` で、shared mask feature に使う `HybridEncoder.outs` の解像度を切り替えられる。
+ - `configs/deimv2/deimv2_dinov3_s_wholebody40_ins.yml`
+ - `configs/deimv2/deimv2_hgnetv2_n_wholebody40_ins.yml`
+ - `configs/deimv2/deimv2_hgnetv2_pico_wholebody40_ins.yml`
+ - `configs/deimv2/deimv2_hgnetv2_femto_wholebody40_ins.yml`
+ - `configs/deimv2/deimv2_hgnetv2_atto_wholebody40_ins.yml`
+  - wholebody40 instance segmentation の対応済み model family として追加した。
+  - dataset / evaluator / sparse body mask 方針は `wholebody40_instance.yml` を共通利用する。
+  - DINOv3-S と HGNetv2-N は `['mal', 'boxes', 'local', 'masks']`、HGNetv2 pico/femto/atto は `['mal', 'boxes', 'masks']` を使う。
 
 ## この設定で学習したモデルの入出力
 - 対象は `configs/deimv2/deimv2_dinov3_x_wholebody40_ins.yml` で学習した DEIMv2 instance segmentation モデル。
