@@ -9,10 +9,40 @@ from engine.data.dataloader import BatchImageCollateFunction
 from engine.data.transforms.container import Compose
 from engine.data.transforms.mosaic import Mosaic
 from engine.misc import dist_utils
+from engine.optim.ema import ModelEMA
 from engine.optim.lr_scheduler import FlatCosineLRScheduler
 
 
 class ResumeStateTests(unittest.TestCase):
+    def test_model_ema_ignores_extra_state_and_copies_non_floating_tensors(self):
+        class ToyModule(torch.nn.Module):
+            def __init__(self):
+                super().__init__()
+                self.weight = torch.nn.Parameter(torch.tensor([1.0], dtype=torch.float32))
+                self.register_buffer('counter', torch.tensor([1], dtype=torch.int64))
+                self.tag = 'initial'
+
+            def get_extra_state(self):
+                return {'tag': self.tag}
+
+            def set_extra_state(self, state):
+                if state:
+                    self.tag = state.get('tag', self.tag)
+
+        model = ToyModule()
+        ema = ModelEMA(model, decay=0.5, warmups=0)
+
+        model.weight.data.fill_(3.0)
+        model.counter.fill_(7)
+        model.tag = 'updated'
+
+        ema.update(model)
+
+        ema_state = ema.module.state_dict()
+        self.assertTrue(torch.allclose(ema_state['weight'], torch.tensor([2.0])))
+        self.assertTrue(torch.equal(ema_state['counter'], torch.tensor([7], dtype=torch.int64)))
+        self.assertEqual(ema_state['_extra_state'], {'tag': 'initial'})
+
     def test_flat_cosine_scheduler_state_roundtrip(self):
         param = torch.nn.Parameter(torch.tensor(1.0))
         optimizer = torch.optim.SGD([param], lr=0.1)

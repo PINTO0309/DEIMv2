@@ -61,9 +61,14 @@ class ModelEMA(object):
             d = self.decay_fn(self.updates)
             msd = dist_utils.de_parallel(model).state_dict()
             for k, v in self.module.state_dict().items():
+                if not torch.is_tensor(v):
+                    continue
+                model_v = msd[k].detach()
                 if v.dtype.is_floating_point:
                     v *= d
-                    v += (1 - d) * msd[k].detach()
+                    v += (1 - d) * model_v
+                else:
+                    v.copy_(model_v)
 
     def to(self, *args, **kwargs):
         self.module = self.module.to(*args, **kwargs)
