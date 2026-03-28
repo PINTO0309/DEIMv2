@@ -114,12 +114,52 @@ def list_image_paths(images_dir: Path) -> List[Path]:
 
 
 def load_checkpoint_state(resume_path: Path) -> Dict[str, torch.Tensor]:
-    checkpoint = torch.load(resume_path, map_location='cpu')
+    try:
+        checkpoint = torch.load(resume_path, map_location='cpu', weights_only=True)
+    except TypeError:
+        checkpoint = torch.load(resume_path, map_location='cpu')
     if 'ema' in checkpoint and isinstance(checkpoint['ema'], dict) and 'module' in checkpoint['ema']:
         return checkpoint['ema']['module']
     if 'model' in checkpoint:
         return checkpoint['model']
     raise KeyError(f'Checkpoint {resume_path} does not contain `ema.module` or `model`.')
+
+
+def tensor_state_only(state: Dict[str, object]) -> Dict[str, torch.Tensor]:
+    return {k: v for k, v in state.items() if torch.is_tensor(v)}
+
+
+def matched_tensor_state(current_state: Dict[str, object], loaded_state: Dict[str, object]):
+    current_tensors = tensor_state_only(current_state)
+    loaded_tensors = tensor_state_only(loaded_state)
+
+    matched_state: Dict[str, torch.Tensor] = {}
+    missing_keys: List[str] = []
+    mismatched_keys: List[str] = []
+
+    for key, value in current_tensors.items():
+        if key not in loaded_tensors:
+            missing_keys.append(key)
+            continue
+        if value.shape != loaded_tensors[key].shape:
+            mismatched_keys.append(key)
+            continue
+        matched_state[key] = loaded_tensors[key]
+
+    unexpected_keys = sorted(set(loaded_tensors.keys()) - set(current_tensors.keys()))
+    return matched_state, missing_keys, mismatched_keys, unexpected_keys
+
+
+def move_to_device(data, device: torch.device):
+    if torch.is_tensor(data):
+        return data.to(device)
+    if isinstance(data, dict):
+        return {k: move_to_device(v, device) for k, v in data.items()}
+    if isinstance(data, list):
+        return [move_to_device(v, device) for v in data]
+    if isinstance(data, tuple):
+        return tuple(move_to_device(v, device) for v in data)
+    return data
 
 
 def resolve_device(device_arg: str | None) -> torch.device:
@@ -395,7 +435,7 @@ def overlay_body_masks(
         return image
 
     base = image.convert('RGBA')
-    mask_image = Image.fromarray(overlay, mode='RGBA')
+    mask_image = Image.fromarray(overlay)
     return Image.alpha_composite(base, mask_image).convert('RGB')
 
 
@@ -774,14 +814,38 @@ def draw_detections(
 class InferenceModel(nn.Module):
     def __init__(self, cfg: YAMLConfig, state_dict: Dict[str, torch.Tensor], device: torch.device):
         super().__init__()
-        cfg.model.load_state_dict(state_dict)
+        matched_state, missing_keys, mismatched_keys, unexpected_keys = matched_tensor_state(
+            cfg.model.state_dict(),
+            state_dict,
+        )
+        load_info = cfg.model.load_state_dict(matched_state, strict=False)
+        if missing_keys or mismatched_keys or unexpected_keys:
+            print(
+                'Partially loaded checkpoint for inference: '
+                f'matched={len(matched_state)}, '
+                f'missing={len(missing_keys)}, '
+                f'shape_mismatch={len(mismatched_keys)}, '
+                f'unexpected={len(unexpected_keys)}'
+            )
+            if missing_keys:
+                print(f'  Missing keys (first 10): {missing_keys[:10]}')
+            if mismatched_keys:
+                print(f'  Shape mismatches (first 10): {mismatched_keys[:10]}')
+            if unexpected_keys:
+                print(f'  Unexpected keys (first 10): {unexpected_keys[:10]}')
+            if load_info.missing_keys:
+                print(f'  load_state_dict missing keys (first 10): {load_info.missing_keys[:10]}')
+            if load_info.unexpected_keys:
+                print(f'  load_state_dict unexpected keys (first 10): {load_info.unexpected_keys[:10]}')
         self.model = cfg.model.eval().to(device)
-        self.postprocessor = cfg.postprocessor.eval().to(device)
+        self.postprocessor = cfg.postprocessor.eval()
         self.device = device
 
     @torch.inference_mode()
     def forward(self, image_tensor: torch.Tensor, orig_target_sizes: torch.Tensor):
         outputs = self.model(image_tensor)
+        outputs = move_to_device(outputs, torch.device('cpu'))
+        orig_target_sizes = orig_target_sizes.to('cpu')
         return self.postprocessor(outputs, orig_target_sizes)
 
 
@@ -841,7 +905,7 @@ def process_images(args) -> None:
     for idx, image_path in enumerate(image_paths, start=1):
         image = Image.open(image_path).convert('RGB')
         orig_w, orig_h = image.size
-        orig_target_sizes = torch.tensor([[orig_w, orig_h]], dtype=torch.float32, device=device)
+        orig_target_sizes = torch.tensor([[orig_w, orig_h]], dtype=torch.float32)
         image_tensor = transform(image).unsqueeze(0).to(device)
 
         results = model(image_tensor, orig_target_sizes)
