@@ -11,6 +11,7 @@ curl -LsSf https://astral.sh/uv/install.sh | sh
 uv sync
 source .venv/bin/activate
 export PYTHONWARNINGS="ignore"
+# and download ckpts
 
 or
 
