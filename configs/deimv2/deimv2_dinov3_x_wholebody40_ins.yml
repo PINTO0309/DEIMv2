@@ -35,8 +35,8 @@ DEIMTransformer:
   hidden_dim: 256
   dim_feedforward: 2048
   mask_feature_level: 1 # 0=stride8, 1=stride16, 2=stride32
-  use_contour_aux_head: False
-  use_distance_aux_head: False
+  use_contour_aux_head: True
+  use_distance_aux_head: True
   aux_mask_feature_level: 1
 
 PostProcessor:
@@ -117,11 +117,11 @@ DEIMCriterion:
   gamma: 1.5
   alpha: 0.75
   reg_max: 32
-  use_boundary_aware_loss: False
+  use_boundary_aware_loss: True
   boundary_aware_width: 3
   boundary_aware_weight: 2.0
-  use_contour_detection: False
-  use_distance_transform: False
+  use_contour_detection: True
+  use_distance_transform: True
   distance_transform_steps: 5
 
   matcher:
