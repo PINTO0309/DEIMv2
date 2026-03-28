@@ -35,6 +35,9 @@ DEIMTransformer:
   hidden_dim: 256
   dim_feedforward: 2048
   mask_feature_level: 1 # 0=stride8, 1=stride16, 2=stride32
+  use_contour_aux_head: False
+  use_distance_aux_head: False
+  aux_mask_feature_level: 1
 
 PostProcessor:
   num_top_queries: 800
@@ -107,10 +110,19 @@ DEIMCriterion:
     loss_ddf: 1.5
     loss_mask_bce: 5
     loss_mask_dice: 5
+    loss_mask_boundary: 1.0
+    loss_mask_contour: 0.5
+    loss_mask_distance: 0.25
   losses: ['mal', 'boxes', 'local', 'masks']
   gamma: 1.5
   alpha: 0.75
   reg_max: 32
+  use_boundary_aware_loss: False
+  boundary_aware_width: 3
+  boundary_aware_weight: 2.0
+  use_contour_detection: False
+  use_distance_transform: False
+  distance_transform_steps: 5
 
   matcher:
     type: HungarianMatcher

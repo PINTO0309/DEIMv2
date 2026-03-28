@@ -15,7 +15,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import torch.nn.init as init
-from typing import List
+from typing import List, Optional
 
 from ..core import register
 from .denoising import get_contrastive_denoising_training_group
@@ -263,6 +263,9 @@ class DEIMTransformer(nn.Module):
                  layer_scale=1,
                  mlp_act='relu',
                  mask_feature_level=0,
+                 use_contour_aux_head=False,
+                 use_distance_aux_head=False,
+                 aux_mask_feature_level=None,
                  use_gateway=True,
                  share_bbox_head=False,
                  share_score_head=False,
@@ -287,6 +290,9 @@ class DEIMTransformer(nn.Module):
         self.aux_loss = aux_loss
         self.reg_max = reg_max
         self.mask_feature_level = mask_feature_level
+        self.use_contour_aux_head = use_contour_aux_head
+        self.use_distance_aux_head = use_distance_aux_head
+        self.aux_mask_feature_level = mask_feature_level if aux_mask_feature_level is None else aux_mask_feature_level
 
         assert query_select_method in ('default', 'one2many', 'agnostic'), ''
         assert cross_attn_method in ('default', 'discrete'), ''
@@ -335,6 +341,20 @@ class DEIMTransformer(nn.Module):
             ('norm', nn.BatchNorm2d(hidden_dim)),
             ('act', get_activation(activation)),
         ]))
+        if self.use_contour_aux_head:
+            self.contour_embed_head = MLP(hidden_dim, hidden_dim, hidden_dim, 3, act=mlp_act)
+            self.contour_feature_head = nn.Sequential(OrderedDict([
+                ('conv', nn.Conv2d(hidden_dim, hidden_dim, 3, padding=1, bias=False)),
+                ('norm', nn.BatchNorm2d(hidden_dim)),
+                ('act', get_activation(activation)),
+            ]))
+        if self.use_distance_aux_head:
+            self.distance_embed_head = MLP(hidden_dim, hidden_dim, hidden_dim, 3, act=mlp_act)
+            self.distance_feature_head = nn.Sequential(OrderedDict([
+                ('conv', nn.Conv2d(hidden_dim, hidden_dim, 3, padding=1, bias=False)),
+                ('norm', nn.BatchNorm2d(hidden_dim)),
+                ('act', get_activation(activation)),
+            ]))
 
         # decoder head
         self.pre_bbox_head = MLP(hidden_dim, hidden_dim, 4, 3, act=mlp_act)
@@ -393,6 +413,14 @@ class DEIMTransformer(nn.Module):
         init.xavier_uniform_(self.mask_embed_head.layers[0].weight)
         init.xavier_uniform_(self.mask_embed_head.layers[1].weight)
         init.xavier_uniform_(self.mask_embed_head.layers[-1].weight)
+        if self.use_contour_aux_head:
+            init.xavier_uniform_(self.contour_embed_head.layers[0].weight)
+            init.xavier_uniform_(self.contour_embed_head.layers[1].weight)
+            init.xavier_uniform_(self.contour_embed_head.layers[-1].weight)
+        if self.use_distance_aux_head:
+            init.xavier_uniform_(self.distance_embed_head.layers[0].weight)
+            init.xavier_uniform_(self.distance_embed_head.layers[1].weight)
+            init.xavier_uniform_(self.distance_embed_head.layers[-1].weight)
         for m, in_channels in zip(self.input_proj, feat_channels):
             if in_channels != self.hidden_dim:
                 init.xavier_uniform_(m[0].weight)
@@ -400,6 +428,39 @@ class DEIMTransformer(nn.Module):
     def _get_mask_logits(self, query_features: torch.Tensor, mask_features: torch.Tensor) -> torch.Tensor:
         mask_embed = self.mask_embed_head(query_features)
         return torch.einsum('bqc,bchw->bqhw', mask_embed, mask_features)
+
+    def _get_aux_mask_logits(
+        self,
+        query_features: torch.Tensor,
+        mask_features: torch.Tensor,
+        embed_head: MLP,
+    ) -> torch.Tensor:
+        mask_embed = embed_head(query_features)
+        return torch.einsum('bqc,bchw->bqhw', mask_embed, mask_features)
+
+    def _validate_feature_level(self, feature_level: int, feats: List[torch.Tensor], feature_name: str) -> None:
+        if 0 <= feature_level < len(feats):
+            return
+        upper_bound = len(feats) - 1
+        raise ValueError(
+            f'Invalid {feature_name}={feature_level}. '
+            f'Received {len(feats)} feature levels, expected index range [0, {upper_bound}].'
+        )
+
+    def _maybe_get_aux_mask_features(self, feats: List[torch.Tensor]) -> tuple[Optional[torch.Tensor], Optional[torch.Tensor]]:
+        contour_features = None
+        distance_features = None
+        if not self.training:
+            return contour_features, distance_features
+
+        if self.use_contour_aux_head or self.use_distance_aux_head:
+            self._validate_feature_level(self.aux_mask_feature_level, feats, 'aux_mask_feature_level')
+
+        if self.use_contour_aux_head:
+            contour_features = self.contour_feature_head(feats[self.aux_mask_feature_level])
+        if self.use_distance_aux_head:
+            distance_features = self.distance_feature_head(feats[self.aux_mask_feature_level])
+        return contour_features, distance_features
 
     def _build_input_proj_layer(self, feat_channels):
         self.input_proj = nn.ModuleList()
@@ -552,14 +613,10 @@ class DEIMTransformer(nn.Module):
 
     def forward(self, feats, targets=None):
         # input projection and embedding
-        if not 0 <= self.mask_feature_level < len(feats):
-            upper_bound = len(feats) - 1
-            raise ValueError(
-                f'Invalid mask_feature_level={self.mask_feature_level}. '
-                f'Received {len(feats)} feature levels, expected index range [0, {upper_bound}].'
-            )
+        self._validate_feature_level(self.mask_feature_level, feats, 'mask_feature_level')
         memory, spatial_shapes = self._get_encoder_input(feats)
         mask_features = self.mask_feature_head(feats[self.mask_feature_level])
+        contour_features, distance_features = self._maybe_get_aux_mask_features(feats)
 
         # prepare denoising training
         if self.training and self.num_denoising > 0:
@@ -610,6 +667,18 @@ class DEIMTransformer(nn.Module):
             out = {'pred_logits': out_logits[-1], 'pred_boxes': out_bboxes[-1], 'pred_corners': out_corners[-1],
                    'ref_points': out_refs[-1], 'up': self.up, 'reg_scale': self.reg_scale,
                    'pred_masks': self._get_mask_logits(out_queries, mask_features)}
+            if self.use_contour_aux_head and contour_features is not None:
+                out['pred_mask_contours'] = self._get_aux_mask_logits(
+                    out_queries,
+                    contour_features,
+                    self.contour_embed_head,
+                )
+            if self.use_distance_aux_head and distance_features is not None:
+                out['pred_mask_distances'] = self._get_aux_mask_logits(
+                    out_queries,
+                    distance_features,
+                    self.distance_embed_head,
+                )
         else:
             out = {'pred_logits': out_logits[-1], 'pred_boxes': out_bboxes[-1],
                    'pred_masks': self._get_mask_logits(out_queries, mask_features)}

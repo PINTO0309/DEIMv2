@@ -43,6 +43,9 @@ DEIMTransformer:
   share_bbox_head: True
   use_gateway: False
   mask_feature_level: 0 # 0=stride16, 1=stride32
+  use_contour_aux_head: False
+  use_distance_aux_head: False
+  aux_mask_feature_level: 0
 
 PostProcessor:
   num_top_queries: 340
@@ -122,8 +125,17 @@ DEIMCriterion:
     loss_ddf: 1.5
     loss_mask_bce: 5
     loss_mask_dice: 5
+    loss_mask_boundary: 1.0
+    loss_mask_contour: 0.5
+    loss_mask_distance: 0.25
   losses: ['mal', 'boxes', 'masks']
   use_uni_set: False
+  use_boundary_aware_loss: False
+  boundary_aware_width: 3
+  boundary_aware_weight: 2.0
+  use_contour_detection: False
+  use_distance_transform: False
+  distance_transform_steps: 5
 
   matcher:
     matcher_change_epoch: 450
