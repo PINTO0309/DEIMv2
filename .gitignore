@@ -155,3 +155,5 @@ tfjs*/
 *.mlpackage/
 *.mp4
 0*/
+
+human-instance-segmentation/
