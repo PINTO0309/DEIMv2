@@ -114,10 +114,9 @@ class CocoEvaluator(object):
             if len(prediction) == 0:
                 continue
 
-            boxes = prediction["boxes"]
-            boxes = convert_to_xywh(boxes).tolist()
-            scores = prediction["scores"].tolist()
-            labels = prediction["labels"].tolist()
+            boxes = convert_to_xywh(prediction["boxes"].detach().cpu()).tolist()
+            scores = prediction["scores"].detach().cpu().tolist()
+            labels = prediction["labels"].detach().cpu().tolist()
 
             coco_results.extend(
                 [
@@ -138,9 +137,9 @@ class CocoEvaluator(object):
             if len(prediction) == 0:
                 continue
 
-            scores = prediction["scores"]
-            labels = prediction["labels"]
-            masks = prediction["masks"]
+            scores = prediction["scores"].detach().cpu()
+            labels = prediction["labels"].detach().cpu()
+            masks = prediction["masks"].detach().cpu()
             if self.segm_eval_category_ids:
                 keep = torch.zeros_like(labels, dtype=torch.bool)
                 for cat_id in self.segm_eval_category_ids:
@@ -182,12 +181,10 @@ class CocoEvaluator(object):
             if len(prediction) == 0:
                 continue
 
-            boxes = prediction["boxes"]
-            boxes = convert_to_xywh(boxes).tolist()
-            scores = prediction["scores"].tolist()
-            labels = prediction["labels"].tolist()
-            keypoints = prediction["keypoints"]
-            keypoints = keypoints.flatten(start_dim=1).tolist()
+            boxes = convert_to_xywh(prediction["boxes"].detach().cpu()).tolist()
+            scores = prediction["scores"].detach().cpu().tolist()
+            labels = prediction["labels"].detach().cpu().tolist()
+            keypoints = prediction["keypoints"].detach().cpu().flatten(start_dim=1).tolist()
 
             coco_results.extend(
                 [
