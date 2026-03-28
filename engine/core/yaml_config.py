@@ -90,7 +90,7 @@ class YAMLConfig(BaseConfig):
 
     @property
     def scaler(self, ):
-        if self._scaler is None and self.yaml_cfg.get('use_amp', False):
+        if self._scaler is None and self.yaml_cfg.get('use_amp', False) and self.get_amp_dtype() == torch.float16:
             self._scaler = create('scaler', self.global_cfg)
         return super().scaler
 

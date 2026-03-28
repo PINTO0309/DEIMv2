@@ -104,6 +104,8 @@ class DetSolver(BaseSolver):
                 print_freq=args.print_freq,
                 ema=self.ema,
                 scaler=self.scaler,
+                use_amp=args.use_amp,
+                amp_dtype=args.get_amp_dtype(),
                 lr_warmup_scheduler=self.lr_warmup_scheduler,
                 writer=self.writer
             )

@@ -64,6 +64,7 @@ class BaseConfig(object):
         self.flat_epoch: int = None
         
         self.use_amp :bool = False
+        self.amp_dtype: str = 'auto'
         self.use_ema :bool = False
         self.ema_decay :float = 0.9999
         self.ema_warmups: int = 2000
@@ -180,7 +181,7 @@ class BaseConfig(object):
 
     @property
     def scaler(self) -> GradScaler:
-        if self._scaler is None and self.use_amp and torch.cuda.is_available():
+        if self._scaler is None and self.use_amp and self.get_amp_dtype() == torch.float16:
             self._scaler = GradScaler()
         return self._scaler
 
@@ -288,6 +289,21 @@ class BaseConfig(object):
     def writer(self, m):
         assert isinstance(m, SummaryWriter), f'{type(m)} must be SummaryWriter'
         self._writer = m
+
+    def get_amp_dtype(self):
+        if not self.use_amp or not torch.cuda.is_available():
+            return None
+
+        amp_dtype = str(getattr(self, 'amp_dtype', 'auto')).lower()
+        if amp_dtype == 'auto':
+            return torch.bfloat16 if torch.cuda.is_bf16_supported() else torch.float16
+        if amp_dtype in ('bf16', 'bfloat16'):
+            return torch.bfloat16
+        if amp_dtype in ('fp16', 'float16', 'half'):
+            return torch.float16
+        if amp_dtype in ('fp32', 'float32'):
+            return torch.float32
+        raise ValueError(f'Unsupported amp_dtype: {self.amp_dtype}')
 
     def __repr__(self, ):
         s = ''

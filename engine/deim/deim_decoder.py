@@ -188,27 +188,40 @@ class TransformerDecoder(nn.Module):
 
             output = layer(output, ref_points_input, value, spatial_shapes, attn_mask, query_pos_embed)
 
-            if i == 0 :
-                # Initial bounding box predictions with inverse sigmoid refinement
-                pre_bboxes = F.sigmoid(pre_bbox_head(output) + inverse_sigmoid(ref_points_detach))
-                pre_scores = score_head[0](output)
-                ref_points_initial = pre_bboxes.detach()
+            with torch.autocast(device_type=output.device.type, enabled=False):
+                output_fp32 = output.float()
+                ref_points_detach_fp32 = ref_points_detach.float()
+                output_detach_fp32 = output_detach.float() if torch.is_tensor(output_detach) else 0.0
+                pred_corners_undetach_fp32 = pred_corners_undetach.float() if torch.is_tensor(pred_corners_undetach) else 0.0
 
-            # Refine bounding box corners using FDR, integrating previous layer's corrections
-            pred_corners = bbox_head[i](output + output_detach) + pred_corners_undetach
-            inter_ref_bbox = distance2bbox(ref_points_initial, integral(pred_corners, project), reg_scale)
+                if i == 0 :
+                    # Initial bounding box predictions with inverse sigmoid refinement
+                    pre_bboxes = F.sigmoid(pre_bbox_head(output_fp32) + inverse_sigmoid(ref_points_detach_fp32))
+                    pre_bboxes = pre_bboxes.clamp(0.0, 1.0)
+                    pre_scores = score_head[0](output_fp32)
+                    ref_points_initial = pre_bboxes.detach()
 
-            if self.training or i == self.eval_idx:
-                scores = score_head[i](output)
-                # Lqe does not affect the performance here.
-                scores = self.lqe_layers[i](scores, pred_corners)
-                dec_out_logits.append(scores)
-                dec_out_bboxes.append(inter_ref_bbox)
-                dec_out_pred_corners.append(pred_corners)
-                dec_out_refs.append(ref_points_initial)
+                # Refine bounding box corners using FDR, integrating previous layer's corrections
+                pred_corners = bbox_head[i](output_fp32 + output_detach_fp32) + pred_corners_undetach_fp32
+                pred_corners = pred_corners.clamp(min=-64.0, max=64.0)
+                inter_ref_bbox = distance2bbox(
+                    ref_points_initial.float(),
+                    integral(pred_corners, project.float()),
+                    reg_scale.float(),
+                )
+                inter_ref_bbox = inter_ref_bbox.nan_to_num(nan=0.5, posinf=1.0, neginf=0.0).clamp(0.0, 1.0)
 
-                if not self.training:
-                    break
+                if self.training or i == self.eval_idx:
+                    scores = score_head[i](output_fp32)
+                    # Lqe does not affect the performance here.
+                    scores = self.lqe_layers[i](scores, pred_corners)
+                    dec_out_logits.append(scores)
+                    dec_out_bboxes.append(inter_ref_bbox)
+                    dec_out_pred_corners.append(pred_corners)
+                    dec_out_refs.append(ref_points_initial)
+
+                    if not self.training:
+                        break
 
             pred_corners_undetach = pred_corners
             ref_points_detach = inter_ref_bbox.detach()
@@ -492,11 +505,12 @@ class DEIMTransformer(nn.Module):
         enc_topk_memory, enc_topk_logits, enc_topk_anchors = \
             self._select_topk(memory, enc_outputs_logits, anchors, self.num_queries)
 
-        enc_topk_bbox_unact :torch.Tensor = self.enc_bbox_head(enc_topk_memory) + enc_topk_anchors
+        with torch.autocast(device_type=memory.device.type, enabled=False):
+            enc_topk_bbox_unact :torch.Tensor = self.enc_bbox_head(enc_topk_memory.float()) + enc_topk_anchors.float()
 
         enc_topk_bboxes_list, enc_topk_logits_list = [], []
         if self.training:
-            enc_topk_bboxes = F.sigmoid(enc_topk_bbox_unact)
+            enc_topk_bboxes = F.sigmoid(enc_topk_bbox_unact).clamp(0.0, 1.0)
             enc_topk_bboxes_list.append(enc_topk_bboxes)
             enc_topk_logits_list.append(enc_topk_logits)
 
