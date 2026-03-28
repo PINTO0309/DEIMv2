@@ -325,25 +325,33 @@ class BaseSolver(object):
             state = torch.load(path, map_location='cpu')
 
         module = dist_utils.de_parallel(self.model)
+        current_state_dict = module.state_dict()
 
         # Load the appropriate state dict
         if 'ema' in state:
             pretrain_state_dict = state['ema']['module']
         else:
             pretrain_state_dict = state['model']
+        pretrain_state_dict = self._tensor_state_only(pretrain_state_dict)
 
         # Adjust head parameters between datasets
         try:
-            adjusted_state_dict = self._adjust_head_parameters(module.state_dict(), pretrain_state_dict)
-            stat, infos = self._matched_state(module.state_dict(), adjusted_state_dict)
+            adjusted_state_dict = self._adjust_head_parameters(current_state_dict, pretrain_state_dict)
+            stat, infos = self._matched_state(current_state_dict, adjusted_state_dict)
         except Exception:
-            stat, infos = self._matched_state(module.state_dict(), pretrain_state_dict)
+            stat, infos = self._matched_state(current_state_dict, pretrain_state_dict)
 
         module.load_state_dict(stat, strict=False)
         print(f'Load model.state_dict, {infos}')
 
     @staticmethod
-    def _matched_state(state: Dict[str, torch.Tensor], params: Dict[str, torch.Tensor]):
+    def _tensor_state_only(state: Dict[str, torch.Tensor]):
+        return {k: v for k, v in state.items() if torch.is_tensor(v)}
+
+    @classmethod
+    def _matched_state(cls, state: Dict[str, torch.Tensor], params: Dict[str, torch.Tensor]):
+        state = cls._tensor_state_only(state)
+        params = cls._tensor_state_only(params)
         missed_list = []
         unmatched_list = []
         matched_state = {}

@@ -187,7 +187,7 @@
 - 今回追加したパラメータが未反映の古い checkpoint を `-t last_full_epoch.pth` で指定し、current config 側で今回追加したパラメータを有効化して fine-tuning することは可能。
 - ただしこれは `resume` ではなく `tuning` であり、復元されるのは model の一致部分の重みだけ。
 - optimizer、EMA、scaler、scheduler、resume metadata は引き継がれない。
-- 今回の実装後に保存された新形式 checkpoint を、さらに `-t` で使うケースには現時点で制約がある。
+- 今回の実装後に保存された新形式 checkpoint についても、`-t` 経路で non-tensor state を無視するように修正済みのため、原理上は再利用可能。
 
 ### `tuning` と `resume` の違い
 
@@ -239,12 +239,13 @@
 ### 現時点の制約
 
 - 今回の resume 改善で `state_dict` に `_extra_state` が入るようになった。
-- しかし `tuning` 側の部分ロード処理は、state_dict の value を tensor 前提で比較している。
-- そのため、新形式 checkpoint に含まれる `_extra_state` のような dict value をそのまま `-t` に渡すと、現状の実装では例外になる可能性がある。
-- つまり、現時点で安全に想定できるのは:
-  - 今回追加前の古い checkpoint を `-t` するケース
-- 現時点で未対処の制約があるのは:
-  - 今回追加後の新形式 checkpoint をさらに `-t` するケース
+- これに対して、`tuning` 側では non-tensor state を部分ロード対象から除外するよう修正済み。
+- そのため `_extra_state` を含む新形式 checkpoint を `-t` に渡しても、現在は tensor parameter のみで安全に matching される。
+- 新旧どちらの checkpoint でも、`-t` の意味は変わらず「一致する model 重みだけ部分ロードし、current config で新規学習を開始する」こと。
+- 依然として注意すべき点は以下:
+  - 新しい aux head 自体の重みは、checkpoint に存在しなければランダム初期化になる
+  - criterion や optimizer の状態は `tuning` では引き継がれない
+  - current config と checkpoint の構造差が大きい場合は、missing key が増えるため読み込みログの確認が必要
 
 ### 推奨運用
 
@@ -253,17 +254,17 @@
   - current config で今回追加した機能を明示的に有効化する
   - 新規 aux head はランダム初期化から学習される前提で使う
 
+- 新形式 checkpoint を使って別条件へ再 fine-tuning したい場合:
+  - `-t newer_checkpoint.pth` も利用可能
+  - `_extra_state` は tuning 時に無視されるため、部分ロードでは落ちない
+  - ただし `resume` のような完全復元ではないので、current config 側の設定で新しい学習を開始することを前提にする
+
 - 完全再開したい場合:
   - `-r` を使う
   - checkpoint 保存時と同じ config を使う
 
-- 新形式 checkpoint を再度 `-t` したい場合:
-  - 現状では安全性未保証
-  - `tuning` 側が `_extra_state` のような non-tensor state を無視できるようにしてから運用する
-
 ### 追加で確認すべきこと
 
-- `tuning` 経路で `_extra_state` を含む state_dict を安全に処理できるようにするか
 - `-t` で読み込んだ際の missing key 一覧をログに出し、新規 aux head のみ missing であることを確認できるようにするか
 - `old baseline -> new aux config` の移行を正式運用にするなら、推奨コマンド例を別途記載するか
 
