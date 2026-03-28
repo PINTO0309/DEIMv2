@@ -39,7 +39,7 @@ class CocoEvaluator(object):
             if iou_type == 'segm' and self.segm_eval_category_ids:
                 self.coco_eval[iou_type].params.catIds = list(self.segm_eval_category_ids)
 
-        self.img_ids = []
+        self.img_ids = {k: [] for k in iou_types}
         self.eval_imgs = {k: [] for k in iou_types}
 
     def cleanup(self):
@@ -49,7 +49,7 @@ class CocoEvaluator(object):
             self.coco_eval[iou_type] = COCOeval_faster(coco_gt_iou, iouType=iou_type, print_function=print, separate_eval=True)
             if iou_type == 'segm' and self.segm_eval_category_ids:
                 self.coco_eval[iou_type].params.catIds = list(self.segm_eval_category_ids)
-        self.img_ids = []
+        self.img_ids = {k: [] for k in self.iou_types}
         self.eval_imgs = {k: [] for k in self.iou_types}
 
     def _get_coco_gt_for_iou(self, iou_type):
@@ -62,13 +62,18 @@ class CocoEvaluator(object):
 
 
     def update(self, predictions):
-        img_ids = list(np.unique(list(predictions.keys())))
-        self.img_ids.extend(img_ids)
-
         for iou_type in self.iou_types:
-            results = self.prepare(predictions, iou_type)
             coco_eval = self.coco_eval[iou_type]
             coco_gt_iou = self._get_coco_gt_for_iou(iou_type)
+            valid_img_ids = set(coco_gt_iou.imgs.keys()) if hasattr(coco_gt_iou, 'imgs') else None
+            predictions_iou = predictions if valid_img_ids is None else {
+                img_id: pred for img_id, pred in predictions.items() if img_id in valid_img_ids
+            }
+            img_ids = list(np.unique(list(predictions_iou.keys())))
+            if not img_ids:
+                continue
+            self.img_ids[iou_type].extend(img_ids)
+            results = self.prepare(predictions_iou, iou_type)
 
             # suppress pycocotools prints
             with open(os.devnull, 'w') as devnull:
@@ -82,7 +87,7 @@ class CocoEvaluator(object):
 
     def synchronize_between_processes(self):
         for iou_type in self.iou_types:
-            img_ids, eval_imgs = merge(self.img_ids, self.eval_imgs[iou_type])
+            img_ids, eval_imgs = merge(self.img_ids[iou_type], self.eval_imgs[iou_type])
 
             coco_eval = self.coco_eval[iou_type]
             coco_eval.params.imgIds = img_ids
@@ -205,6 +210,9 @@ def convert_to_xywh(boxes):
     return torch.stack((xmin, ymin, xmax - xmin, ymax - ymin), dim=1)
 
 def merge(img_ids, eval_imgs):
+    if not img_ids or not eval_imgs:
+        return [], []
+
     all_img_ids = dist_utils.all_gather(img_ids)
     all_eval_imgs = dist_utils.all_gather(eval_imgs)
 
