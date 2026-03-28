@@ -53,7 +53,7 @@ python tools/dataset/dataset_shaping_tools/12_make_wholebody40_ins_annotation.py
 --train-out /media/xxxxx/ExtremeSSD/make_wholebody40/train_ins.json \
 --val-out /media/xxxxx/ExtremeSSD/make_wholebody40/val_ins.json \
 --report-json /media/xxxxx/ExtremeSSD/make_wholebody40/merge_person_masks_report.json \
---match-iou-threshold 0.90
+--match-iou-threshold 0.70
 ```
 
 ### Notes

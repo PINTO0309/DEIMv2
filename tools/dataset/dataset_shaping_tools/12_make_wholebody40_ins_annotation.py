@@ -57,7 +57,7 @@ def parse_args():
     parser.add_argument(
         '--match-iou-threshold',
         type=float,
-        default=0.90,
+        default=0.70,
     )
     parser.add_argument(
         '--report-json',
