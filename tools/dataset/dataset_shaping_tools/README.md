@@ -45,14 +45,15 @@ python tools/dataset/dataset_shaping_tools/12_make_wholebody40_ins_annotation.py
 
 ```bash
 python tools/dataset/dataset_shaping_tools/12_make_wholebody40_ins_annotation.py \
-  --train-json /media/xxxxx/ExtremeSSD/make_wholebody40/train.json \
-  --val-json /media/xxxxx/ExtremeSSD/make_wholebody40/val.json \
-  --src-train-json /media/xxxxx/ExtremeSSD/make_wholebody40/instances_train2017_person_only_no_crowd.json \
-  --src-val-json /media/xxxxx/ExtremeSSD/make_wholebody40/instances_val2017_person_only_no_crowd.json \
-  --src-trainval-json /media/xxxxx/ExtremeSSD/make_wholebody40/instances_trainval2017_person_only_no_crowd.json \
-  --train-out /media/xxxxx/ExtremeSSD/make_wholebody40/train_ins.json \
-  --val-out /media/xxxxx/ExtremeSSD/make_wholebody40/val_ins.json \
-  --report-json /media/xxxxx/ExtremeSSD/make_wholebody40/merge_person_masks_report.json
+--train-json /media/xxxxx/ExtremeSSD/make_wholebody40/train.json \
+--val-json /media/xxxxx/ExtremeSSD/make_wholebody40/val.json \
+--src-train-json /media/xxxxx/ExtremeSSD/make_wholebody40/instances_train2017_person_only_no_crowd.json \
+--src-val-json /media/xxxxx/ExtremeSSD/make_wholebody40/instances_val2017_person_only_no_crowd.json \
+--src-trainval-json /media/xxxxx/ExtremeSSD/make_wholebody40/instances_trainval2017_person_only_no_crowd.json \
+--train-out /media/xxxxx/ExtremeSSD/make_wholebody40/train_ins.json \
+--val-out /media/xxxxx/ExtremeSSD/make_wholebody40/val_ins.json \
+--report-json /media/xxxxx/ExtremeSSD/make_wholebody40/merge_person_masks_report.json \
+--match-iou-threshold 0.90
 ```
 
 ### Notes
@@ -83,20 +84,20 @@ python tools/dataset/dataset_shaping_tools/13_render_wholebody40_ins_preview.py
 
 ```bash
 python tools/dataset/dataset_shaping_tools/13_render_wholebody40_ins_preview.py \
-  --ann-json /media/xxxxx/ExtremeSSD/make_wholebody40/wholebody40/annotations/val_ins.json \
-  --images-dir /media/xxxxx/ExtremeSSD/make_wholebody40/wholebody40/images \
-  --output-dir /media/xxxxx/ExtremeSSD/make_wholebody40/wholebody40/val_ins_preview \
-  --limit 100
+--ann-json /media/xxxxx/ExtremeSSD/make_wholebody40/wholebody40/annotations/val_ins.json \
+--images-dir /media/xxxxx/ExtremeSSD/make_wholebody40/wholebody40/images \
+--output-dir /media/xxxxx/ExtremeSSD/make_wholebody40/wholebody40/val_ins_preview \
+--limit 100
 ```
 
 ### Example: render from `instances_trainval2017_person_only_no_crowd.json`
 
 ```bash
 python tools/dataset/dataset_shaping_tools/13_render_wholebody40_ins_preview.py \
-  --ann-json /media/xxxxx/ExtremeSSD/make_wholebody40/instances_trainval2017_person_only_no_crowd.json \
-  --images-dir /media/xxxxx/ExtremeSSD/make_wholebody40/wholebody40/images \
-  --output-dir /media/xxxxx/ExtremeSSD/make_wholebody40/wholebody40/trainval_person_preview \
-  --limit 100
+--ann-json /media/xxxxx/ExtremeSSD/make_wholebody40/instances_trainval2017_person_only_no_crowd.json \
+--images-dir /media/xxxxx/ExtremeSSD/make_wholebody40/wholebody40/images \
+--output-dir /media/xxxxx/ExtremeSSD/make_wholebody40/wholebody40/trainval_person_preview \
+--limit 100
 ```
 
 ### Notes
