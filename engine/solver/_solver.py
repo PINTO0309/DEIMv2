@@ -1,5 +1,6 @@
 import torch
 import torch.nn as nn
+import copy
 
 from datetime import datetime
 from pathlib import Path
@@ -183,10 +184,19 @@ class BaseSolver(object):
             'val_batch_size': getattr(getattr(self, 'val_dataloader', None), 'batch_size', None),
         }
 
+    def _get_resume_config_sections(self):
+        yaml_cfg = getattr(self.cfg, 'yaml_cfg', {})
+        sections = {}
+        for key in ('DEIMTransformer', 'DEIMCriterion'):
+            if key in yaml_cfg:
+                sections[key] = copy.deepcopy(yaml_cfg[key])
+        return sections
+
     def _get_resume_meta(self):
         return {
-            'format_version': 1,
+            'format_version': 2,
             'runtime_signature': self._get_runtime_signature(),
+            'config_sections': self._get_resume_config_sections(),
             'backend_state': dist_utils.capture_backend_state(),
             'rng_state_by_rank': dist_utils.all_gather(dist_utils.capture_rng_state()),
             'train_loader_state': self._get_loader_state(getattr(self, 'train_dataloader', None)),
@@ -213,6 +223,20 @@ class BaseSolver(object):
         if mismatch_keys:
             mismatch_text = ', '.join([f'{key}: saved={saved}, current={current}' for key, saved, current in mismatch_keys])
             raise RuntimeError(f'Resume checkpoint is incompatible with the current runtime signature ({mismatch_text}).')
+
+        saved_sections = resume_meta.get('config_sections')
+        if saved_sections is not None:
+            current_sections = self._get_resume_config_sections()
+            section_mismatches = []
+            for key in sorted(set(saved_sections.keys()) | set(current_sections.keys())):
+                if saved_sections.get(key) != current_sections.get(key):
+                    section_mismatches.append(key)
+            if section_mismatches:
+                mismatch_text = ', '.join(section_mismatches)
+                raise RuntimeError(
+                    'Resume checkpoint is incompatible with the current model/loss configuration '
+                    f'(mismatched sections: {mismatch_text}).'
+                )
 
         dist_utils.restore_backend_state(resume_meta.get('backend_state'))
         self._load_loader_state(getattr(self, 'train_dataloader', None), resume_meta.get('train_loader_state'))

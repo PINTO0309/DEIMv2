@@ -79,6 +79,48 @@ class DEIMCriterion(nn.Module):
         self.use_distance_transform = use_distance_transform
         self.distance_transform_steps = distance_transform_steps
 
+    def get_extra_state(self):
+        return {
+            'num_classes': self.num_classes,
+            'weight_dict': copy.deepcopy(self.weight_dict),
+            'losses': copy.deepcopy(self.losses),
+            'boxes_weight_format': self.boxes_weight_format,
+            'share_matched_indices': self.share_matched_indices,
+            'alpha': self.alpha,
+            'gamma': self.gamma,
+            'reg_max': self.reg_max,
+            'mask_category_ids': copy.deepcopy(self.mask_category_ids),
+            'mal_alpha': self.mal_alpha,
+            'use_uni_set': self.use_uni_set,
+            'use_boundary_aware_loss': self.use_boundary_aware_loss,
+            'boundary_aware_width': self.boundary_aware_width,
+            'boundary_aware_weight': self.boundary_aware_weight,
+            'use_contour_detection': self.use_contour_detection,
+            'use_distance_transform': self.use_distance_transform,
+            'distance_transform_steps': self.distance_transform_steps,
+        }
+
+    def set_extra_state(self, state):
+        if not state:
+            return
+        self.num_classes = state.get('num_classes', self.num_classes)
+        self.weight_dict = copy.deepcopy(state.get('weight_dict', self.weight_dict))
+        self.losses = copy.deepcopy(state.get('losses', self.losses))
+        self.boxes_weight_format = state.get('boxes_weight_format', self.boxes_weight_format)
+        self.share_matched_indices = state.get('share_matched_indices', self.share_matched_indices)
+        self.alpha = state.get('alpha', self.alpha)
+        self.gamma = state.get('gamma', self.gamma)
+        self.reg_max = state.get('reg_max', self.reg_max)
+        self.mask_category_ids = copy.deepcopy(state.get('mask_category_ids', self.mask_category_ids))
+        self.mal_alpha = state.get('mal_alpha', self.mal_alpha)
+        self.use_uni_set = state.get('use_uni_set', self.use_uni_set)
+        self.use_boundary_aware_loss = state.get('use_boundary_aware_loss', self.use_boundary_aware_loss)
+        self.boundary_aware_width = state.get('boundary_aware_width', self.boundary_aware_width)
+        self.boundary_aware_weight = state.get('boundary_aware_weight', self.boundary_aware_weight)
+        self.use_contour_detection = state.get('use_contour_detection', self.use_contour_detection)
+        self.use_distance_transform = state.get('use_distance_transform', self.use_distance_transform)
+        self.distance_transform_steps = state.get('distance_transform_steps', self.distance_transform_steps)
+
     def loss_labels_focal(self, outputs, targets, indices, num_boxes):
         assert 'pred_logits' in outputs
         src_logits = outputs['pred_logits']

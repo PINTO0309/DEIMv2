@@ -390,6 +390,57 @@ class DEIMTransformer(nn.Module):
             [self.dec_bbox_head[i] if i <= self.eval_idx else nn.Identity() for i in range(len(self.dec_bbox_head))]
         )
 
+    def get_extra_state(self):
+        return {
+            'hidden_dim': self.hidden_dim,
+            'feat_strides': copy.deepcopy(self.feat_strides),
+            'num_levels': self.num_levels,
+            'num_classes': self.num_classes,
+            'num_queries': self.num_queries,
+            'eps': self.eps,
+            'num_layers': self.num_layers,
+            'eval_spatial_size': None if self.eval_spatial_size is None else list(self.eval_spatial_size),
+            'aux_loss': self.aux_loss,
+            'reg_max': self.reg_max,
+            'mask_feature_level': self.mask_feature_level,
+            'use_contour_aux_head': self.use_contour_aux_head,
+            'use_distance_aux_head': self.use_distance_aux_head,
+            'aux_mask_feature_level': self.aux_mask_feature_level,
+            'cross_attn_method': self.cross_attn_method,
+            'query_select_method': self.query_select_method,
+            'num_denoising': self.num_denoising,
+            'label_noise_ratio': self.label_noise_ratio,
+            'box_noise_scale': self.box_noise_scale,
+            'learn_query_content': self.learn_query_content,
+            'eval_idx': self.eval_idx,
+        }
+
+    def set_extra_state(self, state):
+        if not state:
+            return
+        self.hidden_dim = state.get('hidden_dim', self.hidden_dim)
+        self.feat_strides = state.get('feat_strides', self.feat_strides)
+        self.num_levels = state.get('num_levels', self.num_levels)
+        self.num_classes = state.get('num_classes', self.num_classes)
+        self.num_queries = state.get('num_queries', self.num_queries)
+        self.eps = state.get('eps', self.eps)
+        self.num_layers = state.get('num_layers', self.num_layers)
+        eval_spatial_size = state.get('eval_spatial_size', self.eval_spatial_size)
+        self.eval_spatial_size = None if eval_spatial_size is None else tuple(eval_spatial_size)
+        self.aux_loss = state.get('aux_loss', self.aux_loss)
+        self.reg_max = state.get('reg_max', self.reg_max)
+        self.mask_feature_level = state.get('mask_feature_level', self.mask_feature_level)
+        self.use_contour_aux_head = state.get('use_contour_aux_head', self.use_contour_aux_head)
+        self.use_distance_aux_head = state.get('use_distance_aux_head', self.use_distance_aux_head)
+        self.aux_mask_feature_level = state.get('aux_mask_feature_level', self.aux_mask_feature_level)
+        self.cross_attn_method = state.get('cross_attn_method', self.cross_attn_method)
+        self.query_select_method = state.get('query_select_method', self.query_select_method)
+        self.num_denoising = state.get('num_denoising', self.num_denoising)
+        self.label_noise_ratio = state.get('label_noise_ratio', self.label_noise_ratio)
+        self.box_noise_scale = state.get('box_noise_scale', self.box_noise_scale)
+        self.learn_query_content = state.get('learn_query_content', self.learn_query_content)
+        self.eval_idx = state.get('eval_idx', self.eval_idx)
+
     def _reset_parameters(self, feat_channels):
         bias = bias_init_with_prob(0.01)
         init.constant_(self.enc_score_head.bias, bias)
