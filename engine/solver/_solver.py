@@ -29,6 +29,7 @@ def remove_module_prefix(state_dict):
 class BaseSolver(object):
     def __init__(self, cfg: BaseConfig) -> None:
         self.cfg = cfg
+        self._legacy_resume_warned = False
         self.obj365_ids = [
             0, 46, 5, 58, 114, 55, 116, 65, 21, 40, 176, 127, 249, 24, 56, 139, 92, 78, 99, 96,
             144, 295, 178, 180, 38, 39, 13, 43, 120, 219, 148, 173, 165, 154, 137, 113, 145, 146,
@@ -113,6 +114,119 @@ class BaseSolver(object):
     def to(self, module, device):
         return module.to(device) if hasattr(module, 'to') else module
 
+    def _get_transform_container(self, dataset):
+        for attr in ('_transforms', 'transforms'):
+            transforms = getattr(dataset, attr, None)
+            if transforms is not None:
+                return transforms
+        return None
+
+    def _get_loader_state(self, loader):
+        if loader is None:
+            return None
+
+        dataset = getattr(loader, 'dataset', None)
+        transforms = self._get_transform_container(dataset) if dataset is not None else None
+        generator = getattr(loader, '_resume_generator', None)
+
+        return {
+            'epoch': getattr(loader, 'epoch', -1),
+            'dataset_epoch': getattr(dataset, 'epoch', -1) if dataset is not None else -1,
+            'batch_size': getattr(loader, 'batch_size', None),
+            'seed_base': getattr(loader, '_resume_seed_base', None),
+            'rank': getattr(loader, '_resume_rank', None),
+            'generator_state': generator.get_state() if generator is not None else None,
+            'collate_state': loader.collate_fn.state_dict() if hasattr(loader.collate_fn, 'state_dict') else None,
+            'transform_state': transforms.state_dict() if hasattr(transforms, 'state_dict') else None,
+        }
+
+    def _load_loader_state(self, loader, state_dict):
+        if loader is None or not state_dict:
+            return
+
+        saved_epoch = state_dict.get('epoch', -1)
+        if hasattr(loader, 'set_epoch') and saved_epoch >= 0:
+            loader.set_epoch(saved_epoch)
+        else:
+            loader._epoch = saved_epoch
+            dataset = getattr(loader, 'dataset', None)
+            if dataset is not None and hasattr(dataset, 'set_epoch'):
+                dataset.set_epoch(saved_epoch)
+            if hasattr(loader.collate_fn, 'set_epoch'):
+                loader.collate_fn.set_epoch(saved_epoch)
+
+        if state_dict.get('collate_state') is not None and hasattr(loader.collate_fn, 'load_state_dict'):
+            loader.collate_fn.load_state_dict(state_dict['collate_state'])
+
+        dataset = getattr(loader, 'dataset', None)
+        transforms = self._get_transform_container(dataset) if dataset is not None else None
+        if state_dict.get('transform_state') is not None and hasattr(transforms, 'load_state_dict'):
+            transforms.load_state_dict(state_dict['transform_state'])
+
+        generator = getattr(loader, '_resume_generator', None)
+        if generator is not None and state_dict.get('generator_state') is not None:
+            generator.set_state(state_dict['generator_state'])
+
+    def _get_runtime_signature(self):
+        resolved_amp_dtype = None
+        if hasattr(self.cfg, 'get_amp_dtype'):
+            resolved = self.cfg.get_amp_dtype()
+            resolved_amp_dtype = None if resolved is None else str(resolved)
+
+        return {
+            'world_size': dist_utils.get_world_size(),
+            'seed': getattr(self.cfg, 'seed', None),
+            'use_amp': getattr(self.cfg, 'use_amp', False),
+            'amp_dtype': getattr(self.cfg, 'amp_dtype', None),
+            'resolved_amp_dtype': resolved_amp_dtype,
+            'train_batch_size': getattr(getattr(self, 'train_dataloader', None), 'batch_size', None),
+            'val_batch_size': getattr(getattr(self, 'val_dataloader', None), 'batch_size', None),
+        }
+
+    def _get_resume_meta(self):
+        return {
+            'format_version': 1,
+            'runtime_signature': self._get_runtime_signature(),
+            'backend_state': dist_utils.capture_backend_state(),
+            'rng_state_by_rank': dist_utils.all_gather(dist_utils.capture_rng_state()),
+            'train_loader_state': self._get_loader_state(getattr(self, 'train_dataloader', None)),
+        }
+
+    def _warn_legacy_resume(self):
+        if self._legacy_resume_warned:
+            return
+        print('Warning: checkpoint does not include full resume metadata; exact resume is not guaranteed.')
+        self._legacy_resume_warned = True
+
+    def _load_resume_meta(self, resume_meta):
+        if not resume_meta:
+            self._warn_legacy_resume()
+            return
+
+        saved_signature = resume_meta.get('runtime_signature', {})
+        current_signature = self._get_runtime_signature()
+        mismatch_keys = []
+        for key in ['world_size', 'seed', 'use_amp', 'amp_dtype', 'train_batch_size', 'val_batch_size']:
+            if saved_signature.get(key) != current_signature.get(key):
+                mismatch_keys.append((key, saved_signature.get(key), current_signature.get(key)))
+
+        if mismatch_keys:
+            mismatch_text = ', '.join([f'{key}: saved={saved}, current={current}' for key, saved, current in mismatch_keys])
+            raise RuntimeError(f'Resume checkpoint is incompatible with the current runtime signature ({mismatch_text}).')
+
+        dist_utils.restore_backend_state(resume_meta.get('backend_state'))
+        self._load_loader_state(getattr(self, 'train_dataloader', None), resume_meta.get('train_loader_state'))
+
+        rng_state_by_rank = resume_meta.get('rng_state_by_rank')
+        if rng_state_by_rank is not None:
+            rank = dist_utils.get_rank()
+            world_size = dist_utils.get_world_size()
+            if len(rng_state_by_rank) != world_size:
+                raise RuntimeError(
+                    f'Resume checkpoint expects world_size={len(rng_state_by_rank)}, but current world_size={world_size}.'
+                )
+            dist_utils.restore_rng_state(rng_state_by_rank[rank])
+
     def state_dict(self):
         """State dict, train/eval"""
         state = {}
@@ -126,6 +240,8 @@ class BaseSolver(object):
                 v = dist_utils.de_parallel(v)
                 state[k] = v.state_dict()
 
+        state['resume_meta'] = self._get_resume_meta()
+
         return state
 
     def load_state_dict(self, state):
@@ -134,22 +250,38 @@ class BaseSolver(object):
             self.last_epoch = state['last_epoch']
             print('Load last_epoch')
 
+        load_order = ['model', 'optimizer', 'lr_scheduler', 'lr_warmup_scheduler', 'ema', 'scaler']
+        loaded = set()
+
+        for k in load_order:
+            v = getattr(self, k, None)
+            if not hasattr(v, 'load_state_dict'):
+                continue
+            if k in state:
+                v = dist_utils.de_parallel(v)
+                v.load_state_dict(state[k])
+                print(f'Load {k}.state_dict')
+                loaded.add(k)
+            elif k == 'ema':
+                model = getattr(self, 'model', None)
+                if model is not None:
+                    ema = dist_utils.de_parallel(v)
+                    model_state_dict = remove_module_prefix(model.state_dict())
+                    ema.load_state_dict({'module': model_state_dict})
+                    print(f'Load {k}.state_dict from model.state_dict')
+                    loaded.add(k)
+            else:
+                print(f'Not load {k}.state_dict')
+
         for k, v in self.__dict__.items():
+            if k in loaded or k in load_order:
+                continue
             if hasattr(v, 'load_state_dict') and k in state:
                 v = dist_utils.de_parallel(v)
                 v.load_state_dict(state[k])
                 print(f'Load {k}.state_dict')
 
-            if hasattr(v, 'load_state_dict') and k not in state:
-                if k == 'ema':
-                    model = getattr(self, 'model', None)
-                    if model is not None:
-                        ema = dist_utils.de_parallel(v)
-                        model_state_dict = remove_module_prefix(model.state_dict())
-                        ema.load_state_dict({'module': model_state_dict})
-                        print(f'Load {k}.state_dict from model.state_dict')
-                else:
-                    print(f'Not load {k}.state_dict')
+        self._load_resume_meta(state.get('resume_meta'))
 
     def load_resume_state(self, path: str):
         """Load resume"""

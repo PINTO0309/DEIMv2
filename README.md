@@ -344,6 +344,13 @@ CUDA_VISIBLE_DEVICES=0,1,2,3 torchrun --master_port=7777 --nproc_per_node=4 trai
 CUDA_VISIBLE_DEVICES=0 torchrun --master_port=7777 --nproc_per_node=1 train.py -c configs/deimv2/deimv2_hgnetv2_n_wholebody34.yml --use-amp --seed=0
 ```
 
+Resume training from the exact end-of-epoch state with:
+```shell
+CUDA_VISIBLE_DEVICES=0 torchrun --master_port=7777 --nproc_per_node=1 train.py -c configs/deimv2/deimv2_dinov3_x_wholebody40.yml -r outputs/deimv2_dinov3_x_wholebody40/last_full_epoch.pth --use-amp --seed=0
+```
+
+`last_full_epoch.pth` and `checkpoint%04d.pth` are the canonical resume checkpoints for exact epoch-boundary restoration. `best_stg1.pth` and `best_stg2.pth` remain valid for evaluation / tuning, but they are not the guaranteed exact-resume artifacts.
+
 <!-- <summary>2. Testing </summary> -->
 2. Testing (Validation)
 ```shell

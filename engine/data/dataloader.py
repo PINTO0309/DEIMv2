@@ -81,6 +81,14 @@ class BaseCollateFunction(object):
     def epoch(self):
         return self._epoch if hasattr(self, '_epoch') else -1
 
+    def state_dict(self):
+        return {
+            'epoch': self.epoch,
+        }
+
+    def load_state_dict(self, state_dict):
+        self._epoch = state_dict.get('epoch', -1)
+
     def __call__(self, items):
         raise NotImplementedError('')
 
@@ -150,6 +158,19 @@ class BatchImageCollateFunction(BaseCollateFunction):
         self.print_info_flag = True
         self.print_copyblend_flag = True
         # self.interpolation = interpolation
+
+    def state_dict(self):
+        state = super().state_dict()
+        state.update({
+            'print_info_flag': self.print_info_flag,
+            'print_copyblend_flag': self.print_copyblend_flag,
+        })
+        return state
+
+    def load_state_dict(self, state_dict):
+        super().load_state_dict(state_dict)
+        self.print_info_flag = state_dict.get('print_info_flag', True)
+        self.print_copyblend_flag = state_dict.get('print_copyblend_flag', True)
 
     def apply_mixup(self, images, targets):
         """

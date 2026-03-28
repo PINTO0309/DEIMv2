@@ -48,6 +48,11 @@ class DetSolver(BaseSolver):
             self.lr_scheduler = FlatCosineLRScheduler(self.optimizer, args.lr_gamma, iter_per_epoch, total_epochs=args.epoches,
                                                 warmup_iter=args.warmup_iter, flat_epochs=args.flat_epoch, no_aug_epochs=args.no_aug_epoch)
             self.self_lr_scheduler = True
+
+        if args.resume:
+            print(f'Restore runtime state after scheduler init from {args.resume}')
+            self.load_resume_state(args.resume)
+
         n_parameters = sum([p.numel() for p in self.model.parameters() if p.requires_grad])
         print(f'number of trainable parameters: {n_parameters}')
 
@@ -117,12 +122,7 @@ class DetSolver(BaseSolver):
             self.last_epoch += 1
 
             if self.output_dir and epoch < self.train_dataloader.collate_fn.stop_epoch:
-                checkpoint_paths = [self.output_dir / 'last.pth']
-                # extra checkpoint before LR drop and every 100 epochs
-                if (epoch + 1) % args.checkpoint_freq == 0:
-                    checkpoint_paths.append(self.output_dir / f'checkpoint{epoch:04}.pth')
-                for checkpoint_path in checkpoint_paths:
-                    dist_utils.save_on_master(self.state_dict(), checkpoint_path)
+                dist_utils.save_on_master(self.state_dict(), self.output_dir / 'last.pth')
 
             module = self.ema.module if self.ema else self.model
             test_stats, coco_evaluator = evaluate(
@@ -173,6 +173,8 @@ class DetSolver(BaseSolver):
 
             if self.output_dir:
                 dist_utils.save_on_master(self.state_dict(), self.output_dir / 'last_full_epoch.pth')
+                if (epoch + 1) % args.checkpoint_freq == 0:
+                    dist_utils.save_on_master(self.state_dict(), self.output_dir / f'checkpoint{epoch:04}.pth')
 
             log_stats = {
                 **{f'train_{k}': v for k, v in train_stats.items()},

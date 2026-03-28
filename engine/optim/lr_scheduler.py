@@ -52,6 +52,13 @@ class FlatCosineLRScheduler:
                  warmup_iter, flat_epochs, no_aug_epochs, scheduler_type="cosine"):
         self.base_lrs = [group["initial_lr"] for group in optimizer.param_groups]
         self.min_lrs = [base_lr * lr_gamma for base_lr in self.base_lrs]
+        self.lr_gamma = lr_gamma
+        self.iter_per_epoch = iter_per_epoch
+        self.total_epochs = total_epochs
+        self.warmup_iter = warmup_iter
+        self.flat_epochs = flat_epochs
+        self.no_aug_epochs = no_aug_epochs
+        self.scheduler_type = scheduler_type
 
         total_iter = int(iter_per_epoch * total_epochs)
         no_aug_iter = int(iter_per_epoch * no_aug_epochs)
@@ -71,3 +78,32 @@ class FlatCosineLRScheduler:
         for i, group in enumerate(optimizer.param_groups):
             group["lr"] = self.lr_func(current_iter, self.base_lrs[i], self.min_lrs[i])
         return optimizer
+
+    def state_dict(self):
+        return {
+            'base_lrs': list(self.base_lrs),
+            'min_lrs': list(self.min_lrs),
+            'lr_gamma': self.lr_gamma,
+            'iter_per_epoch': self.iter_per_epoch,
+            'total_epochs': self.total_epochs,
+            'warmup_iter': self.warmup_iter,
+            'flat_epochs': self.flat_epochs,
+            'no_aug_epochs': self.no_aug_epochs,
+            'scheduler_type': self.scheduler_type,
+        }
+
+    def load_state_dict(self, state_dict):
+        self.base_lrs = list(state_dict['base_lrs'])
+        self.min_lrs = list(state_dict['min_lrs'])
+        self.lr_gamma = state_dict['lr_gamma']
+        self.iter_per_epoch = state_dict['iter_per_epoch']
+        self.total_epochs = state_dict['total_epochs']
+        self.warmup_iter = state_dict['warmup_iter']
+        self.flat_epochs = state_dict['flat_epochs']
+        self.no_aug_epochs = state_dict['no_aug_epochs']
+        self.scheduler_type = state_dict.get('scheduler_type', 'cosine')
+
+        total_iter = int(self.iter_per_epoch * self.total_epochs)
+        no_aug_iter = int(self.iter_per_epoch * self.no_aug_epochs)
+        flat_iter = int(self.iter_per_epoch * self.flat_epochs)
+        self.lr_func = partial(flat_cosine_schedule, total_iter, self.warmup_iter, flat_iter, no_aug_iter)

@@ -10,6 +10,7 @@ from torch.utils.data import DataLoader
 
 import re
 import copy
+from functools import partial
 
 from ._config import BaseConfig
 from .workspace import create
@@ -191,6 +192,20 @@ class YAMLConfig(BaseConfig):
             # pop unexpected key for dataloader init
             _ = global_cfg[name].pop('total_batch_size')
         print(f'building {name} with batch_size={bs}...')
-        loader = create(name, global_cfg, batch_size=bs)
+        from ..misc import dist_utils
+        base_seed = 0 if self.seed is None else int(self.seed)
+        rank = dist_utils.get_rank()
+        generator = dist_utils.build_dataloader_generator(base_seed, rank)
+        worker_init_fn = partial(dist_utils.seed_dataloader_worker, base_seed=base_seed, rank=rank)
+        loader = create(
+            name,
+            global_cfg,
+            batch_size=bs,
+            generator=generator,
+            worker_init_fn=worker_init_fn,
+        )
+        loader._resume_generator = generator
+        loader._resume_seed_base = base_seed
+        loader._resume_rank = rank
         loader.shuffle = self.yaml_cfg[name].get('shuffle', False)
         return loader
