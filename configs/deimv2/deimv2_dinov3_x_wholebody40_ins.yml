@@ -77,7 +77,7 @@ train_dataloader:
         epoch: [4, 29, 50]
         ops: ['RandomPhotometricDistort', 'RandomZoomOut', 'RandomIoUCrop']
       mosaic_prob: -0.1
-  total_batch_size: 1
+  total_batch_size: 2
   num_workers: 4
 
   collate_fn:
