@@ -1,6 +1,7 @@
 import torch
 import torch.nn as nn
 import copy
+import pickle
 
 from datetime import datetime
 from pathlib import Path
@@ -25,6 +26,26 @@ def remove_module_prefix(state_dict):
         else:
             new_state_dict[k] = v
     return new_state_dict
+
+
+def load_checkpoint_compat(path: str, map_location='cpu'):
+    if path.startswith('http'):
+        return torch.hub.load_state_dict_from_url(path, map_location=map_location)
+
+    try:
+        return torch.load(path, map_location=map_location)
+    except pickle.UnpicklingError as error:
+        error_text = str(error)
+        if 'Weights only load failed' not in error_text:
+            raise
+
+        print(
+            f'Warning: retrying torch.load with weights_only=False for trusted checkpoint: {path}'
+        )
+        try:
+            return torch.load(path, map_location=map_location, weights_only=False)
+        except TypeError:
+            return torch.load(path, map_location=map_location)
 
 
 class BaseSolver(object):
@@ -309,20 +330,14 @@ class BaseSolver(object):
 
     def load_resume_state(self, path: str):
         """Load resume"""
-        if path.startswith('http'):
-            state = torch.hub.load_state_dict_from_url(path, map_location='cpu')
-        else:
-            state = torch.load(path, map_location='cpu')
+        state = load_checkpoint_compat(path, map_location='cpu')
 
         # state['model'] = remove_module_prefix(state['model'])
         self.load_state_dict(state)
 
     def load_tuning_state(self, path: str):
         """Load model for tuning and adjust mismatched head parameters"""
-        if path.startswith('http'):
-            state = torch.hub.load_state_dict_from_url(path, map_location='cpu')
-        else:
-            state = torch.load(path, map_location='cpu')
+        state = load_checkpoint_compat(path, map_location='cpu')
 
         module = dist_utils.de_parallel(self.model)
         current_state_dict = module.state_dict()
