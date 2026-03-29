@@ -42,12 +42,23 @@
   - `True` のとき、train 時の出力 dict に `pred_mask_contours` が追加される。
   - 通常は `DEIMCriterion.use_contour_detection=True` と組み合わせて使う。
   - eval/deploy の出力には影響しない。
+  - 狙いは次の通り:
+    - mask 輪郭のにじみを減らす
+    - 接触している人物同士の境界を切り分けやすくする
+    - main の `pred_masks` を直接いじらず、輪郭専用の補助タスクで境界情報を学習させる
 
 - `use_distance_aux_head`
   - decoder 内の distance-map 予測用補助 branch を有効化する。
   - `True` のとき、train 時の出力 dict に `pred_mask_distances` が追加される。
   - 通常は `DEIMCriterion.use_distance_transform=True` と組み合わせて使う。
   - eval/deploy の出力には影響しない。
+  - 狙いは次の通り:
+    - mask の全体形状を滑らかに整える
+    - 境界付近の形状整合性を高める
+    - 接触している人物同士を分けやすくする
+  - `use_contour_aux_head` との違い:
+    - contour は輪郭線そのものを強調する補助タスク
+    - distance は輪郭から内外へ広がる形状情報を学習する補助タスク
 
 - `aux_mask_feature_level`
   - contour / distance の補助 head が参照する encoder feature level を指定する。
