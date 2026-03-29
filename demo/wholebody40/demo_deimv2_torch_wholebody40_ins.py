@@ -819,7 +819,7 @@ class InferenceModel(nn.Module):
         cfg: YAMLConfig,
         state_dict: Dict[str, torch.Tensor],
         device: torch.device,
-        mask_resize_origin: str = 'center',
+        mask_resize_origin: str = 'topleft',
     ):
         super().__init__()
         matched_state, missing_keys, mismatched_keys, unexpected_keys = matched_tensor_state(
@@ -996,7 +996,7 @@ def parse_args():
     parser.add_argument('--keypoint_threshold', type=float, default=None)
     parser.add_argument('--mask_threshold', type=float, default=0.5)
     parser.add_argument('--mask_alpha', type=check_alpha, default=128)
-    parser.add_argument('--mask_resize_origin', type=str, choices=['topleft', 'center'], default='center')
+    parser.add_argument('--mask_resize_origin', type=str, choices=['topleft', 'center'], default='topleft')
     parser.add_argument('--keypoint_drawing_mode', type=str, choices=['dot', 'box', 'both'], default='dot')
     parser.add_argument('--enable_bone_drawing_mode', action='store_true')
     parser.add_argument('--disable_generation_identification_mode', action='store_true')
