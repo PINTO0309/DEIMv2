@@ -6,6 +6,7 @@ import argparse
 import json
 import math
 import os
+import pickle
 import sys
 from collections import Counter
 from dataclasses import dataclass
@@ -116,7 +117,7 @@ def list_image_paths(images_dir: Path) -> List[Path]:
 def load_checkpoint_state(resume_path: Path) -> Dict[str, torch.Tensor]:
     try:
         checkpoint = torch.load(resume_path, map_location='cpu', weights_only=True)
-    except TypeError:
+    except (TypeError, pickle.UnpicklingError):
         checkpoint = torch.load(resume_path, map_location='cpu')
     if 'ema' in checkpoint and isinstance(checkpoint['ema'], dict) and 'module' in checkpoint['ema']:
         return checkpoint['ema']['module']
