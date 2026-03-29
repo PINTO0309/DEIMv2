@@ -93,7 +93,7 @@ https://github.com/Intellindust-AI-Lab/DEIMv2/compare/main...PINTO0309:DEIMv2:uv
 
 
 ## 🚀 Updates
-- [x] **\[2026.1.7\]** STA, introduced in DEIMv2, has been integrated into the SOTA distillation library [LightlyTrain](https://github.com/lightly-ai/lightly-train/blob/1fbe09744891727b4b494583ee62f35e7b7b1668/src/lightly_train/_task_models/dinov3_ltdetr_object_detection/dinov3_vit_wrapper.py#L15), demonstrating its practical value and impact in real-world training pipelines. 
+- [x] **\[2026.1.7\]** STA, introduced in DEIMv2, has been integrated into the SOTA distillation library [LightlyTrain](https://github.com/lightly-ai/lightly-train/blob/1fbe09744891727b4b494583ee62f35e7b7b1668/src/lightly_train/_task_models/dinov3_ltdetr_object_detection/dinov3_vit_wrapper.py#L15), demonstrating its practical value and impact in real-world training pipelines.
 - [x] **\[2026.1.7\]** FP16 Inference Fix: **Use TensorRT ≥ 10.6 to ensure stable execution and correct detection results.** For detailed deployment instructions, please refer to [Deployment](https://github.com/Intellindust-AI-Lab/DEIMv2?tab=readme-ov-file#4-tools).
 - [x] **\[2025.11.3\]** [We have uploaded our models to Hugging Face](https://huggingface.co/Intellindust)! Thanks to NielsRogge!
 - [x] **\[2025.10.28\]** Optimized the attention module in ViT-Tiny, reducing memory usage by half for the S and M models.
@@ -338,6 +338,7 @@ ckpts/
 CUDA_VISIBLE_DEVICES=0,1,2,3 torchrun --master_port=7777 --nproc_per_node=4 train.py -c configs/deimv2/deimv2_dinov3_${model}_coco.yml --use-amp --seed=0
 CUDA_VISIBLE_DEVICES=0 torchrun --master_port=7777 --nproc_per_node=1 train.py -c configs/deimv2/deimv2_dinov3_x_wholebody34.yml --use-amp --seed=0
 CUDA_VISIBLE_DEVICES=0 torchrun --master_port=7777 --nproc_per_node=1 train.py -c configs/deimv2/deimv2_dinov3_x_wholebody40.yml --use-amp --seed=0
+CUDA_VISIBLE_DEVICES=0 torchrun --master_port=7777 --nproc_per_node=1 train.py -c configs/deimv2/deimv2_dinov3_x_wholebody40_ins_s08.yml --use-amp --seed=0
 
 # for HGNetv2-based variants
 CUDA_VISIBLE_DEVICES=0,1,2,3 torchrun --master_port=7777 --nproc_per_node=4 train.py -c configs/deimv2/deimv2_hgnetv2_${model}_coco.yml --use-amp --seed=0
