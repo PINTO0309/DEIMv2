@@ -22,6 +22,12 @@ from ..optim.lr_scheduler import FlatCosineLRScheduler
 
 
 class DetSolver(BaseSolver):
+    def _get_primary_metric_key(self, test_stats: dict):
+        if 'coco_eval_masks' in test_stats:
+            return 'coco_eval_masks'
+        if 'coco_eval_bbox' in test_stats:
+            return 'coco_eval_bbox'
+        return next(iter(test_stats), None) if test_stats else None
 
     def fit(self, ):
         self.train()
@@ -42,6 +48,11 @@ class DetSolver(BaseSolver):
             self.lr_scheduler = FlatCosineLRScheduler(self.optimizer, args.lr_gamma, iter_per_epoch, total_epochs=args.epoches,
                                                 warmup_iter=args.warmup_iter, flat_epochs=args.flat_epoch, no_aug_epochs=args.no_aug_epoch)
             self.self_lr_scheduler = True
+
+        if args.resume:
+            print(f'Restore runtime state after scheduler init from {args.resume}')
+            self.load_resume_state(args.resume)
+
         n_parameters = sum([p.numel() for p in self.model.parameters() if p.requires_grad])
         print(f'number of trainable parameters: {n_parameters}')
 
@@ -63,10 +74,11 @@ class DetSolver(BaseSolver):
                 self.device
             )
             self._report_validation(coco_evaluator, self.last_epoch)
-            for k in test_stats:
+            primary_metric_key = self._get_primary_metric_key(test_stats)
+            if primary_metric_key is not None:
                 best_stat['epoch'] = self.last_epoch
-                best_stat[k] = test_stats[k][0]
-                top1 = test_stats[k][0]
+                best_stat[primary_metric_key] = test_stats[primary_metric_key][0]
+                top1 = test_stats[primary_metric_key][0]
                 print(f'best_stat: {best_stat}')
 
         best_stat_print = best_stat.copy()
@@ -97,6 +109,8 @@ class DetSolver(BaseSolver):
                 print_freq=args.print_freq,
                 ema=self.ema,
                 scaler=self.scaler,
+                use_amp=args.use_amp,
+                amp_dtype=args.get_amp_dtype(),
                 lr_warmup_scheduler=self.lr_warmup_scheduler,
                 writer=self.writer
             )
@@ -108,12 +122,7 @@ class DetSolver(BaseSolver):
             self.last_epoch += 1
 
             if self.output_dir and epoch < self.train_dataloader.collate_fn.stop_epoch:
-                checkpoint_paths = [self.output_dir / 'last.pth']
-                # extra checkpoint before LR drop and every 100 epochs
-                if (epoch + 1) % args.checkpoint_freq == 0:
-                    checkpoint_paths.append(self.output_dir / f'checkpoint{epoch:04}.pth')
-                for checkpoint_path in checkpoint_paths:
-                    dist_utils.save_on_master(self.state_dict(), checkpoint_path)
+                dist_utils.save_on_master(self.state_dict(), self.output_dir / 'last.pth')
 
             module = self.ema.module if self.ema else self.model
             test_stats, coco_evaluator = evaluate(
@@ -132,49 +141,40 @@ class DetSolver(BaseSolver):
                     for i, v in enumerate(test_stats[k]):
                         self.writer.add_scalar(f'Test/{k}_{i}'.format(k), v, epoch)
 
-                if k in best_stat:
-                    best_stat['epoch'] = epoch if test_stats[k][0] > best_stat[k] else best_stat['epoch']
-                    best_stat[k] = max(best_stat[k], test_stats[k][0])
-                else:
+            primary_metric_key = self._get_primary_metric_key(test_stats)
+            improved = False
+            if primary_metric_key is not None:
+                metric_value = test_stats[primary_metric_key][0]
+                best_value = best_stat.get(primary_metric_key, float('-inf'))
+                improved = metric_value > best_value
+                if improved:
                     best_stat['epoch'] = epoch
-                    best_stat[k] = test_stats[k][0]
-
-                if best_stat[k] > top1:
+                    best_stat[primary_metric_key] = metric_value
                     best_stat_print['epoch'] = epoch
-                    top1 = best_stat[k]
+                    best_stat_print[primary_metric_key] = metric_value
+                    top1 = max(top1, metric_value)
                     if self.output_dir:
                         if epoch >= self.train_dataloader.collate_fn.stop_epoch:
                             dist_utils.save_on_master(self.state_dict(), self.output_dir / 'best_stg2.pth')
                         else:
                             dist_utils.save_on_master(self.state_dict(), self.output_dir / 'best_stg1.pth')
 
-                best_stat_print[k] = max(best_stat[k], top1)
-                print(f'best_stat: {best_stat_print}')  # global best
+                    if self.cfg.tuning and epoch > 0 and metric_value > ttop1:
+                        ttop1 = metric_value
+                        dist_utils.save_on_master(self.state_dict(), self.output_dir / 'tuning_best.pth')
 
-                if best_stat['epoch'] == epoch and self.output_dir:
-                    if epoch >= self.train_dataloader.collate_fn.stop_epoch:
-                        if test_stats[k][0] > top1:
-                            top1 = test_stats[k][0]
-                            dist_utils.save_on_master(self.state_dict(), self.output_dir / 'best_stg2.pth')
-                    else:
-                        top1 = max(test_stats[k][0], top1)
-                        dist_utils.save_on_master(self.state_dict(), self.output_dir / 'best_stg1.pth')
+                print(f'best_stat: {best_stat_print}')
 
-                    ##### For fine-tuning
-                    if self.cfg.tuning:
-                        # Skip saving weights for the first epoch only
-                        if epoch > 0 and test_stats[k][0] > ttop1:
-                            ttop1 = test_stats[k][0]
-                            dist_utils.save_on_master(self.state_dict(), self.output_dir / 'tuning_best.pth')
-
-                elif epoch >= self.train_dataloader.collate_fn.stop_epoch:
-                    best_stat = {'epoch': -1, }
-                    self.ema.decay -= 0.0001
-                    self.load_resume_state(str(self.output_dir / 'best_stg1.pth'))
-                    print(f'Refresh EMA at epoch {epoch} with decay {self.ema.decay}')
+            if primary_metric_key is not None and (not improved) and epoch >= self.train_dataloader.collate_fn.stop_epoch:
+                best_stat = {'epoch': -1, primary_metric_key: top1}
+                self.ema.decay -= 0.0001
+                self.load_resume_state(str(self.output_dir / 'best_stg1.pth'))
+                print(f'Refresh EMA at epoch {epoch} with decay {self.ema.decay}')
 
             if self.output_dir:
                 dist_utils.save_on_master(self.state_dict(), self.output_dir / 'last_full_epoch.pth')
+                if (epoch + 1) % args.checkpoint_freq == 0:
+                    dist_utils.save_on_master(self.state_dict(), self.output_dir / f'checkpoint{epoch:04}.pth')
 
             log_stats = {
                 **{f'train_{k}': v for k, v in train_stats.items()},
@@ -190,13 +190,12 @@ class DetSolver(BaseSolver):
                 # for evaluation logs
                 if coco_evaluator is not None:
                     (self.output_dir / 'eval').mkdir(exist_ok=True)
-                    if "bbox" in coco_evaluator.coco_eval:
-                        filenames = ['latest.pth']
+                    for iou_type, coco_eval in coco_evaluator.coco_eval.items():
+                        filenames = [f'{iou_type}_latest.pth']
                         if epoch % 50 == 0:
-                            filenames.append(f'{epoch:03}.pth')
+                            filenames.append(f'{iou_type}_{epoch:03}.pth')
                         for name in filenames:
-                            torch.save(coco_evaluator.coco_eval["bbox"].eval,
-                                    self.output_dir / "eval" / name)
+                            torch.save(coco_eval.eval, self.output_dir / "eval" / name)
 
         total_time = time.time() - start_time
         total_time_str = str(datetime.timedelta(seconds=int(total_time)))
@@ -213,7 +212,8 @@ class DetSolver(BaseSolver):
         self._report_validation(coco_evaluator, max(self.last_epoch, 0))
 
         if self.output_dir:
-            dist_utils.save_on_master(coco_evaluator.coco_eval["bbox"].eval, self.output_dir / "eval.pth")
+            eval_state = {iou_type: coco_eval.eval for iou_type, coco_eval in coco_evaluator.coco_eval.items()}
+            dist_utils.save_on_master(eval_state, self.output_dir / "eval.pth")
 
         return
 
@@ -413,18 +413,26 @@ class DetSolver(BaseSolver):
         if not dist_utils.is_main_process():
             return
 
-        if coco_evaluator is None or 'bbox' not in coco_evaluator.coco_eval:
+        if coco_evaluator is None:
             return
 
-        coco_eval = coco_evaluator.coco_eval['bbox']
-        metrics = self._collect_coco_metrics(coco_eval)
+        epoch_value = 0 if epoch is None else epoch
+        for iou_type in ('bbox', 'segm'):
+            if iou_type not in coco_evaluator.coco_eval:
+                continue
 
-        if metrics:
-            epoch_value = 0 if epoch is None else epoch
-            self._print_ap_ar_combined_table(metrics, epoch_value)
+            coco_eval = coco_evaluator.coco_eval[iou_type]
+            metrics = self._collect_coco_metrics(coco_eval)
+            if metrics:
+                title = f"{iou_type.upper()} metrics:"
+                if iou_type == 'segm':
+                    title += " sparse body-mask subset"
+                print(title)
+                self._print_ap_ar_combined_table(metrics, epoch_value)
 
-        per_class = self._collect_per_class_ap(coco_eval)
-        if per_class:
-            class_names = self._resolve_class_names()
-            title = "Per-class mAP:" if metrics else "Per-class mAP (inference):"
-            self._print_map_per_class_table(per_class, class_names, title)
+            if iou_type == 'bbox':
+                per_class = self._collect_per_class_ap(coco_eval)
+                if per_class:
+                    class_names = self._resolve_class_names()
+                    title = "Per-class mAP:" if metrics else "Per-class mAP (inference):"
+                    self._print_map_per_class_table(per_class, class_names, title)

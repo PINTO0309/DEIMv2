@@ -131,6 +131,27 @@ class Mosaic(T.Transform):
     def _clone(tensor_dict):
         return {key: value.clone() for (key, value) in tensor_dict.items()}
 
+    def state_dict(self):
+        return {
+            'mosaic_cache': [
+                {
+                    'img': sample['img'].copy(),
+                    'labels': self._clone(sample['labels']),
+                }
+                for sample in self.mosaic_cache
+            ],
+        }
+
+    def load_state_dict(self, state_dict):
+        cache = state_dict.get('mosaic_cache', [])
+        self.mosaic_cache = [
+            {
+                'img': sample['img'].copy(),
+                'labels': self._clone(sample['labels']),
+            }
+            for sample in cache
+        ]
+
     def forward(self, *inputs):
         """
         Args:

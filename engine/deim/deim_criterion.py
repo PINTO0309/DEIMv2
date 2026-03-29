@@ -17,6 +17,7 @@ import copy
 from .dfine_utils import bbox2distance
 from .box_ops import box_cxcywh_to_xyxy, box_iou, generalized_box_iou
 from ..misc.dist_utils import get_world_size, is_dist_available_and_initialized
+from ..misc.mask_resize import resize_masks
 from ..core import register
 
 
@@ -24,7 +25,7 @@ from ..core import register
 class DEIMCriterion(nn.Module):
     """ This class computes the loss for DEIM.
     """
-    __share__ = ['num_classes', ]
+    __share__ = ['num_classes', 'mask_category_ids', 'mask_resize_origin']
     __inject__ = ['matcher', ]
 
     def __init__(self, \
@@ -35,10 +36,18 @@ class DEIMCriterion(nn.Module):
         gamma=2.0,
         num_classes=80,
         reg_max=32,
+        mask_category_ids=None,
+        mask_resize_origin='center',
         boxes_weight_format=None,
         share_matched_indices=False,
         mal_alpha=None,
         use_uni_set=True,
+        use_boundary_aware_loss=False,
+        boundary_aware_width=3,
+        boundary_aware_weight=2.0,
+        use_contour_detection=False,
+        use_distance_transform=False,
+        distance_transform_steps=5,
         ):
         """Create the criterion.
         Parameters:
@@ -61,9 +70,61 @@ class DEIMCriterion(nn.Module):
         self.fgl_targets, self.fgl_targets_dn = None, None
         self.own_targets, self.own_targets_dn = None, None
         self.reg_max = reg_max
+        self.mask_category_ids = [] if mask_category_ids is None else list(mask_category_ids)
+        self.mask_resize_origin = mask_resize_origin
         self.num_pos, self.num_neg = None, None
         self.mal_alpha = mal_alpha
         self.use_uni_set = use_uni_set
+        self.use_boundary_aware_loss = use_boundary_aware_loss
+        self.boundary_aware_width = boundary_aware_width
+        self.boundary_aware_weight = boundary_aware_weight
+        self.use_contour_detection = use_contour_detection
+        self.use_distance_transform = use_distance_transform
+        self.distance_transform_steps = distance_transform_steps
+
+    def get_extra_state(self):
+        return {
+            'num_classes': self.num_classes,
+            'weight_dict': copy.deepcopy(self.weight_dict),
+            'losses': copy.deepcopy(self.losses),
+            'boxes_weight_format': self.boxes_weight_format,
+            'share_matched_indices': self.share_matched_indices,
+            'alpha': self.alpha,
+            'gamma': self.gamma,
+            'reg_max': self.reg_max,
+            'mask_category_ids': copy.deepcopy(self.mask_category_ids),
+            'mask_resize_origin': self.mask_resize_origin,
+            'mal_alpha': self.mal_alpha,
+            'use_uni_set': self.use_uni_set,
+            'use_boundary_aware_loss': self.use_boundary_aware_loss,
+            'boundary_aware_width': self.boundary_aware_width,
+            'boundary_aware_weight': self.boundary_aware_weight,
+            'use_contour_detection': self.use_contour_detection,
+            'use_distance_transform': self.use_distance_transform,
+            'distance_transform_steps': self.distance_transform_steps,
+        }
+
+    def set_extra_state(self, state):
+        if not state:
+            return
+        self.num_classes = state.get('num_classes', self.num_classes)
+        self.weight_dict = copy.deepcopy(state.get('weight_dict', self.weight_dict))
+        self.losses = copy.deepcopy(state.get('losses', self.losses))
+        self.boxes_weight_format = state.get('boxes_weight_format', self.boxes_weight_format)
+        self.share_matched_indices = state.get('share_matched_indices', self.share_matched_indices)
+        self.alpha = state.get('alpha', self.alpha)
+        self.gamma = state.get('gamma', self.gamma)
+        self.reg_max = state.get('reg_max', self.reg_max)
+        self.mask_category_ids = copy.deepcopy(state.get('mask_category_ids', self.mask_category_ids))
+        self.mask_resize_origin = state.get('mask_resize_origin', self.mask_resize_origin)
+        self.mal_alpha = state.get('mal_alpha', self.mal_alpha)
+        self.use_uni_set = state.get('use_uni_set', self.use_uni_set)
+        self.use_boundary_aware_loss = state.get('use_boundary_aware_loss', self.use_boundary_aware_loss)
+        self.boundary_aware_width = state.get('boundary_aware_width', self.boundary_aware_width)
+        self.boundary_aware_weight = state.get('boundary_aware_weight', self.boundary_aware_weight)
+        self.use_contour_detection = state.get('use_contour_detection', self.use_contour_detection)
+        self.use_distance_transform = state.get('use_distance_transform', self.use_distance_transform)
+        self.distance_transform_steps = state.get('distance_transform_steps', self.distance_transform_steps)
 
     def loss_labels_focal(self, outputs, targets, indices, num_boxes):
         assert 'pred_logits' in outputs
@@ -214,6 +275,177 @@ class DEIMCriterion(nn.Module):
 
         return losses
 
+    def loss_masks(self, outputs, targets, indices, num_boxes):
+        if 'pred_masks' not in outputs:
+            return {}
+
+        zero = outputs['pred_masks'].sum() * 0
+
+        src_masks_list = []
+        src_contours_list = []
+        src_distances_list = []
+        target_masks = []
+        valid_masks = []
+        for batch_idx, (target, (matched_pred_idx, matched_target_idx)) in enumerate(zip(targets, indices)):
+            if len(matched_target_idx) == 0:
+                continue
+            if 'masks' not in target or 'mask_valid' not in target:
+                raise KeyError('Body-only mask supervision requires `masks` and `mask_valid` in targets.')
+            valid = target['mask_valid'][matched_target_idx]
+            if valid.numel() == 0 or not valid.any():
+                continue
+            src_masks_list.append(outputs['pred_masks'][batch_idx, matched_pred_idx[valid]])
+            if self.use_contour_detection and 'pred_mask_contours' in outputs:
+                src_contours_list.append(outputs['pred_mask_contours'][batch_idx, matched_pred_idx[valid]])
+            if self.use_distance_transform and 'pred_mask_distances' in outputs:
+                src_distances_list.append(outputs['pred_mask_distances'][batch_idx, matched_pred_idx[valid]])
+            target_masks.append(
+                target['masks'][matched_target_idx[valid]]
+            )
+            valid_masks.append(valid.sum())
+
+        if not src_masks_list:
+            losses = {'loss_mask_bce': zero, 'loss_mask_dice': zero}
+            if self.use_boundary_aware_loss:
+                losses['loss_mask_boundary'] = zero
+            if self.use_contour_detection:
+                losses['loss_mask_contour'] = zero
+            if self.use_distance_transform:
+                losses['loss_mask_distance'] = zero
+            return losses
+
+        src_masks = torch.cat(src_masks_list, dim=0)
+        target_masks = torch.cat(target_masks, dim=0)
+        target_masks = resize_masks(
+            target_masks[:, None].float(),
+            size=src_masks.shape[-2:],
+            mode='nearest',
+            origin=self.mask_resize_origin,
+        )[:, 0].to(device=src_masks.device, dtype=src_masks.dtype)
+
+        num_masks = torch.as_tensor([sum(int(v.item()) for v in valid_masks)], dtype=torch.float, device=src_masks.device)
+        if is_dist_available_and_initialized():
+            torch.distributed.all_reduce(num_masks)
+        num_masks = torch.clamp(num_masks / get_world_size(), min=1).item()
+
+        loss_mask_bce = F.binary_cross_entropy_with_logits(src_masks, target_masks, reduction='none')
+        loss_mask_bce = loss_mask_bce.flatten(1).mean(1).sum() / num_masks
+        loss_mask_dice = self.sigmoid_dice_loss(src_masks, target_masks, num_masks)
+        losses = {'loss_mask_bce': loss_mask_bce, 'loss_mask_dice': loss_mask_dice}
+
+        if self.use_boundary_aware_loss:
+            boundary_weights = self._build_boundary_weight_map(
+                target_masks,
+                boundary_width=self.boundary_aware_width,
+                boundary_weight=self.boundary_aware_weight,
+            )
+            loss_mask_boundary = F.binary_cross_entropy_with_logits(src_masks, target_masks, reduction='none')
+            loss_mask_boundary = (loss_mask_boundary * boundary_weights).flatten(1).mean(1).sum() / num_masks
+            losses['loss_mask_boundary'] = loss_mask_boundary
+
+        if self.use_contour_detection:
+            if src_contours_list:
+                src_contours = torch.cat(src_contours_list, dim=0)
+                contour_targets = self._generate_contour_targets(
+                    target_masks,
+                    target_size=src_contours.shape[-2:],
+                )
+                loss_mask_contour = F.binary_cross_entropy_with_logits(src_contours, contour_targets, reduction='none')
+                loss_mask_contour = loss_mask_contour.flatten(1).mean(1).sum() / num_masks
+            else:
+                loss_mask_contour = zero
+            losses['loss_mask_contour'] = loss_mask_contour
+
+        if self.use_distance_transform:
+            if src_distances_list:
+                src_distances = torch.cat(src_distances_list, dim=0)
+                distance_targets = self._generate_distance_targets(
+                    target_masks,
+                    target_size=src_distances.shape[-2:],
+                    steps=self.distance_transform_steps,
+                )
+                loss_mask_distance = F.l1_loss(torch.sigmoid(src_distances), distance_targets, reduction='none')
+                loss_mask_distance = loss_mask_distance.flatten(1).mean(1).sum() / num_masks
+            else:
+                loss_mask_distance = zero
+            losses['loss_mask_distance'] = loss_mask_distance
+
+        return losses
+
+    def _build_boundary_weight_map(
+        self,
+        target_masks: torch.Tensor,
+        boundary_width: int,
+        boundary_weight: float,
+    ) -> torch.Tensor:
+        if boundary_width <= 1:
+            return torch.ones_like(target_masks, dtype=torch.float32)
+
+        mask = target_masks[:, None].float()
+        pool = nn.MaxPool2d(boundary_width, stride=1, padding=boundary_width // 2)
+        dilated = pool(mask)
+        eroded = 1 - pool(1 - mask)
+        boundary = (dilated - eroded) > 0
+        weights = torch.ones_like(mask, dtype=torch.float32)
+        weights[boundary] = boundary_weight
+        return weights[:, 0]
+
+    def _generate_contour_targets(
+        self,
+        target_masks: torch.Tensor,
+        target_size=None,
+        base_resolution: int = 64 * 48,
+    ) -> torch.Tensor:
+        masks = target_masks[:, None].float()
+        if target_size is not None and tuple(masks.shape[-2:]) != tuple(target_size):
+            masks = resize_masks(
+                masks,
+                size=target_size,
+                mode='nearest',
+                origin=self.mask_resize_origin,
+            )
+
+        _, _, height, width = masks.shape
+        dy = torch.abs(masks[:, :, 1:, :] - masks[:, :, :-1, :])
+        dx = torch.abs(masks[:, :, :, 1:] - masks[:, :, :, :-1])
+        dy = F.pad(dy, (0, 0, 0, 1), mode='replicate')
+        dx = F.pad(dx, (0, 1, 0, 0), mode='replicate')
+        contours = torch.maximum(dy, dx)
+
+        current_resolution = height * width
+        resolution_ratio = current_resolution / float(base_resolution)
+        edge_width = max(1, int((resolution_ratio ** 0.5) * 1.5))
+        if edge_width > 1:
+            kernel_size = 2 * edge_width - 1
+            kernel = torch.ones(1, 1, kernel_size, kernel_size, device=contours.device, dtype=contours.dtype)
+            kernel = kernel / kernel.numel()
+            contours = F.conv2d(contours, kernel, padding=kernel_size // 2)
+            contours = (contours > 0.1).to(dtype=target_masks.dtype)
+
+        return contours[:, 0].to(dtype=target_masks.dtype)
+
+    def _generate_distance_targets(
+        self,
+        target_masks: torch.Tensor,
+        target_size=None,
+        steps: int = 5,
+    ) -> torch.Tensor:
+        masks = target_masks[:, None].float()
+        if target_size is not None and tuple(masks.shape[-2:]) != tuple(target_size):
+            masks = resize_masks(
+                masks,
+                size=target_size,
+                mode='nearest',
+                origin=self.mask_resize_origin,
+            )
+
+        distances = masks.clone()
+        for _ in range(max(0, int(steps))):
+            dilated = F.max_pool2d(distances, kernel_size=3, stride=1, padding=1)
+            distances = distances + (1 - distances) * dilated * 0.5
+
+        return distances[:, 0].to(dtype=target_masks.dtype)
+
     def _get_src_permutation_idx(self, indices):
         # permute predictions following indices
         batch_idx = torch.cat([torch.full_like(src, i) for i, (src, _) in enumerate(indices)])
@@ -259,6 +491,7 @@ class DEIMCriterion(nn.Module):
             'vfl': self.loss_labels_vfl,
             'mal': self.loss_labels_mal,
             'local': self.loss_local,
+            'masks': self.loss_masks,
         }
         assert loss in loss_map, f'do you really want to compute {loss} loss?'
         return loss_map[loss](outputs, targets, indices, num_boxes, **kwargs)
@@ -477,6 +710,15 @@ class DEIMCriterion(nn.Module):
             loss = loss.sum()
 
         return loss
+
+    @staticmethod
+    def sigmoid_dice_loss(inputs, targets, num_boxes, eps=1e-6):
+        inputs = inputs.sigmoid().flatten(1)
+        targets = targets.flatten(1)
+        numerator = 2 * (inputs * targets).sum(1)
+        denominator = inputs.sum(1) + targets.sum(1)
+        loss = 1 - (numerator + eps) / (denominator + eps)
+        return loss.sum() / num_boxes
 
     def get_gradual_steps(self, outputs):
         num_layers = len(outputs['aux_outputs']) + 1 if 'aux_outputs' in outputs else 1

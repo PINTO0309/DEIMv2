@@ -155,3 +155,8 @@ tfjs*/
 *.mlpackage/
 *.mp4
 0*/
+tmp/
+
+human-instance-segmentation/
+deimv2_dinov3_x_wholebody40*/
+deimv2_*.tar.gz

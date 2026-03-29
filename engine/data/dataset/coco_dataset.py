@@ -27,16 +27,25 @@ __all__ = ['CocoDetection']
 @register()
 class CocoDetection(torchvision.datasets.CocoDetection, DetDataset):
     __inject__ = ['transforms', ]
-    __share__ = ['remap_mscoco_category']
+    __share__ = ['remap_mscoco_category', 'mask_category_ids', 'segm_eval_category_ids']
 
-    def __init__(self, img_folder, ann_file, transforms, return_masks=False, remap_mscoco_category=False):
+    def __init__(self, img_folder, ann_file, transforms, return_masks=False,
+                 remap_mscoco_category=False, mask_category_ids=None, segm_eval_category_ids=None,
+                 segm_ann_file=None):
         super(CocoDetection, self).__init__(img_folder, ann_file)
         self._transforms = transforms
-        self.prepare = ConvertCocoPolysToMask(return_masks)
+        self.prepare = ConvertCocoPolysToMask(
+            return_masks,
+            mask_category_ids=mask_category_ids,
+            segm_eval_category_ids=segm_eval_category_ids,
+        )
         self.img_folder = img_folder
         self.ann_file = ann_file
+        self.segm_ann_file = segm_ann_file
         self.return_masks = return_masks
         self.remap_mscoco_category = remap_mscoco_category
+        self.mask_category_ids = None if mask_category_ids is None else list(mask_category_ids)
+        self.segm_eval_category_ids = None if segm_eval_category_ids is None else list(segm_eval_category_ids)
 
     def __getitem__(self, idx):
         img, target = self.load_item(idx)
@@ -92,7 +101,13 @@ class CocoDetection(torchvision.datasets.CocoDetection, DetDataset):
 
 def convert_coco_poly_to_mask(segmentations, height, width):
     masks = []
+    valid_flags = []
     for polygons in segmentations:
+        has_polygons = isinstance(polygons, list) and len(polygons) > 0
+        valid_flags.append(has_polygons)
+        if not has_polygons:
+            masks.append(torch.zeros((height, width), dtype=torch.uint8))
+            continue
         rles = coco_mask.frPyObjects(polygons, height, width)
         mask = coco_mask.decode(rles)
         if len(mask.shape) < 3:
@@ -104,12 +119,14 @@ def convert_coco_poly_to_mask(segmentations, height, width):
         masks = torch.stack(masks, dim=0)
     else:
         masks = torch.zeros((0, height, width), dtype=torch.uint8)
-    return masks
+    return masks, torch.as_tensor(valid_flags, dtype=torch.bool)
 
 
 class ConvertCocoPolysToMask(object):
-    def __init__(self, return_masks=False):
+    def __init__(self, return_masks=False, mask_category_ids=None, segm_eval_category_ids=None):
         self.return_masks = return_masks
+        self.mask_category_ids = None if mask_category_ids is None else set(mask_category_ids)
+        self.segm_eval_category_ids = None if segm_eval_category_ids is None else set(segm_eval_category_ids)
 
     def __call__(self, image: Image.Image, target, **kwargs):
         w, h = image.size
@@ -137,8 +154,19 @@ class ConvertCocoPolysToMask(object):
         labels = torch.tensor(labels, dtype=torch.int64)
 
         if self.return_masks:
-            segmentations = [obj["segmentation"] for obj in anno]
-            masks = convert_coco_poly_to_mask(segmentations, h, w)
+            segmentations = []
+            mask_valid = []
+            segm_eval_valid = []
+            for obj, label in zip(anno, labels.tolist()):
+                mask_allowed = self.mask_category_ids is None or label in self.mask_category_ids
+                has_mask = bool(mask_allowed and 'segmentation' in obj and obj['segmentation'])
+                segmentations.append(obj['segmentation'] if has_mask else [])
+                mask_valid.append(has_mask)
+                segm_allowed = self.segm_eval_category_ids is None or label in self.segm_eval_category_ids
+                segm_eval_valid.append(bool(segm_allowed and 'segmentation' in obj and obj['segmentation']))
+            masks, decoded_mask_valid = convert_coco_poly_to_mask(segmentations, h, w)
+            mask_valid = torch.as_tensor(mask_valid, dtype=torch.bool) & decoded_mask_valid
+            segm_eval_valid = torch.as_tensor(segm_eval_valid, dtype=torch.bool) & decoded_mask_valid
 
         keypoints = None
         if anno and "keypoints" in anno[0]:
@@ -153,6 +181,8 @@ class ConvertCocoPolysToMask(object):
         labels = labels[keep]
         if self.return_masks:
             masks = masks[keep]
+            mask_valid = mask_valid[keep]
+            segm_eval_valid = segm_eval_valid[keep]
         if keypoints is not None:
             keypoints = keypoints[keep]
 
@@ -161,6 +191,8 @@ class ConvertCocoPolysToMask(object):
         target["labels"] = labels
         if self.return_masks:
             target["masks"] = masks
+            target["mask_valid"] = mask_valid
+            target["segm_eval_valid"] = segm_eval_valid
         target["image_id"] = image_id
         if keypoints is not None:
             target["keypoints"] = keypoints

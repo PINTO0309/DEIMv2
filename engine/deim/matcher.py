@@ -125,7 +125,14 @@ class HungarianMatcher(nn.Module):
         sizes = [len(v["boxes"]) for v in targets]
         C = torch.nan_to_num(C, nan=1.0)
         indices_pre = [linear_sum_assignment(c[i]) for i, c in enumerate(C.split(sizes, -1))]
-        indices = [(torch.as_tensor(i, dtype=torch.int64), torch.as_tensor(j, dtype=torch.int64)) for i, j in indices_pre]
+        device = outputs["pred_boxes"].device
+        indices = [
+            (
+                torch.as_tensor(i, dtype=torch.int64, device=device),
+                torch.as_tensor(j, dtype=torch.int64, device=device),
+            )
+            for i, j in indices_pre
+        ]
 
         # Compute topk indices
         if return_topk:
@@ -139,7 +146,10 @@ class HungarianMatcher(nn.Module):
         for i in range(k):
             indices_k = [linear_sum_assignment(c[i]) for i, c in enumerate(C.split(sizes, -1))] if i > 0 else initial_indices
             indices_list.append([
-                (torch.as_tensor(i, dtype=torch.int64), torch.as_tensor(j, dtype=torch.int64))
+                (
+                    torch.as_tensor(i, dtype=torch.int64, device=C.device),
+                    torch.as_tensor(j, dtype=torch.int64, device=C.device),
+                )
                 for i, j in indices_k
             ])
             for c, idx_k in zip(C.split(sizes, -1), indices_k):

@@ -11,11 +11,13 @@ curl -LsSf https://astral.sh/uv/install.sh | sh
 uv sync
 source .venv/bin/activate
 export PYTHONWARNINGS="ignore"
+# and download ckpts
 
 or
 
 pip install ai-edge-litert==2.0.2 calflops==0.3.2 coremltools==9.0b1 faster-coco-eval==1.6.7 gdown==5.2.0 numpy==1.26.4 onnx==1.19.0 onnx-graphsurgeon==0.5.8 onnx2tf==1.28.2 onnxruntime==1.23.0 onnxsim==0.4.30 onnxslim==0.1.69 pybind11==3.0.1 pyyaml==6.0.3 scipy==1.15.3 sit4onnx==1.0.10 snc4onnx==1.0.14 sor4onnx==1.0.7 tensorboard==2.20.0 transformers==4.56.2
 sudo apt-get install -y libgl1-mesa-dev libopencv-core-dev libopencv-imgproc-dev
+# and download ckpts
 ```
 
 ## Differential implementation of optimizations
@@ -91,7 +93,7 @@ https://github.com/Intellindust-AI-Lab/DEIMv2/compare/main...PINTO0309:DEIMv2:uv
 
 
 ## 🚀 Updates
-- [x] **\[2026.1.7\]** STA, introduced in DEIMv2, has been integrated into the SOTA distillation library [LightlyTrain](https://github.com/lightly-ai/lightly-train/blob/1fbe09744891727b4b494583ee62f35e7b7b1668/src/lightly_train/_task_models/dinov3_ltdetr_object_detection/dinov3_vit_wrapper.py#L15), demonstrating its practical value and impact in real-world training pipelines. 
+- [x] **\[2026.1.7\]** STA, introduced in DEIMv2, has been integrated into the SOTA distillation library [LightlyTrain](https://github.com/lightly-ai/lightly-train/blob/1fbe09744891727b4b494583ee62f35e7b7b1668/src/lightly_train/_task_models/dinov3_ltdetr_object_detection/dinov3_vit_wrapper.py#L15), demonstrating its practical value and impact in real-world training pipelines.
 - [x] **\[2026.1.7\]** FP16 Inference Fix: **Use TensorRT ≥ 10.6 to ensure stable execution and correct detection results.** For detailed deployment instructions, please refer to [Deployment](https://github.com/Intellindust-AI-Lab/DEIMv2?tab=readme-ov-file#4-tools).
 - [x] **\[2025.11.3\]** [We have uploaded our models to Hugging Face](https://huggingface.co/Intellindust)! Thanks to NielsRogge!
 - [x] **\[2025.10.28\]** Optimized the attention module in ViT-Tiny, reducing memory usage by half for the S and M models.
@@ -336,11 +338,19 @@ ckpts/
 CUDA_VISIBLE_DEVICES=0,1,2,3 torchrun --master_port=7777 --nproc_per_node=4 train.py -c configs/deimv2/deimv2_dinov3_${model}_coco.yml --use-amp --seed=0
 CUDA_VISIBLE_DEVICES=0 torchrun --master_port=7777 --nproc_per_node=1 train.py -c configs/deimv2/deimv2_dinov3_x_wholebody34.yml --use-amp --seed=0
 CUDA_VISIBLE_DEVICES=0 torchrun --master_port=7777 --nproc_per_node=1 train.py -c configs/deimv2/deimv2_dinov3_x_wholebody40.yml --use-amp --seed=0
+CUDA_VISIBLE_DEVICES=0 torchrun --master_port=7777 --nproc_per_node=1 train.py -c configs/deimv2/deimv2_dinov3_x_wholebody40_ins_s08.yml --use-amp --seed=0
 
 # for HGNetv2-based variants
 CUDA_VISIBLE_DEVICES=0,1,2,3 torchrun --master_port=7777 --nproc_per_node=4 train.py -c configs/deimv2/deimv2_hgnetv2_${model}_coco.yml --use-amp --seed=0
 CUDA_VISIBLE_DEVICES=0 torchrun --master_port=7777 --nproc_per_node=1 train.py -c configs/deimv2/deimv2_hgnetv2_n_wholebody34.yml --use-amp --seed=0
 ```
+
+Resume training from the exact end-of-epoch state with:
+```shell
+CUDA_VISIBLE_DEVICES=0 torchrun --master_port=7777 --nproc_per_node=1 train.py -c configs/deimv2/deimv2_dinov3_x_wholebody40.yml -r outputs/deimv2_dinov3_x_wholebody40/last_full_epoch.pth --use-amp --seed=0
+```
+
+`last_full_epoch.pth` and `checkpoint%04d.pth` are the canonical resume checkpoints for exact epoch-boundary restoration. `best_stg1.pth` and `best_stg2.pth` remain valid for evaluation / tuning, but they are not the guaranteed exact-resume artifacts.
 
 <!-- <summary>2. Testing </summary> -->
 2. Testing (Validation)

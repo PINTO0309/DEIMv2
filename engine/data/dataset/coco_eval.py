@@ -20,39 +20,65 @@ __all__ = ['CocoEvaluator',]
 
 @register()
 class CocoEvaluator(object):
-    def __init__(self, coco_gt, iou_types):
+    __share__ = ['segm_eval_category_ids', 'segm_ignore_missing_masks']
+
+    def __init__(self, coco_gt, iou_types, segm_eval_category_ids=None, segm_ignore_missing_masks=True):
         assert isinstance(iou_types, (list, tuple))
-        coco_gt = copy.deepcopy(coco_gt)
-        self.coco_gt : COCO = coco_gt
+        if isinstance(coco_gt, dict):
+            self.coco_gt = {k: copy.deepcopy(v) for k, v in coco_gt.items()}
+        else:
+            self.coco_gt = copy.deepcopy(coco_gt)
         self.iou_types = iou_types
+        self.segm_eval_category_ids = [] if segm_eval_category_ids is None else list(segm_eval_category_ids)
+        self.segm_ignore_missing_masks = segm_ignore_missing_masks
 
         self.coco_eval = {}
         for iou_type in iou_types:
-            self.coco_eval[iou_type] = COCOeval_faster(coco_gt, iouType=iou_type, print_function=print, separate_eval=True)
+            coco_gt_iou = self._get_coco_gt_for_iou(iou_type)
+            self.coco_eval[iou_type] = COCOeval_faster(coco_gt_iou, iouType=iou_type, print_function=print, separate_eval=True)
+            if iou_type == 'segm' and self.segm_eval_category_ids:
+                self.coco_eval[iou_type].params.catIds = list(self.segm_eval_category_ids)
 
-        self.img_ids = []
+        self.img_ids = {k: [] for k in iou_types}
         self.eval_imgs = {k: [] for k in iou_types}
 
     def cleanup(self):
         self.coco_eval = {}
         for iou_type in self.iou_types:
-            self.coco_eval[iou_type] = COCOeval_faster(self.coco_gt, iouType=iou_type, print_function=print, separate_eval=True)
-        self.img_ids = []
+            coco_gt_iou = self._get_coco_gt_for_iou(iou_type)
+            self.coco_eval[iou_type] = COCOeval_faster(coco_gt_iou, iouType=iou_type, print_function=print, separate_eval=True)
+            if iou_type == 'segm' and self.segm_eval_category_ids:
+                self.coco_eval[iou_type].params.catIds = list(self.segm_eval_category_ids)
+        self.img_ids = {k: [] for k in self.iou_types}
         self.eval_imgs = {k: [] for k in self.iou_types}
+
+    def _get_coco_gt_for_iou(self, iou_type):
+        if isinstance(self.coco_gt, dict):
+            if iou_type in self.coco_gt:
+                return self.coco_gt[iou_type]
+            if 'bbox' in self.coco_gt:
+                return self.coco_gt['bbox']
+        return self.coco_gt
 
 
     def update(self, predictions):
-        img_ids = list(np.unique(list(predictions.keys())))
-        self.img_ids.extend(img_ids)
-
         for iou_type in self.iou_types:
-            results = self.prepare(predictions, iou_type)
             coco_eval = self.coco_eval[iou_type]
+            coco_gt_iou = self._get_coco_gt_for_iou(iou_type)
+            valid_img_ids = set(coco_gt_iou.imgs.keys()) if hasattr(coco_gt_iou, 'imgs') else None
+            predictions_iou = predictions if valid_img_ids is None else {
+                img_id: pred for img_id, pred in predictions.items() if img_id in valid_img_ids
+            }
+            img_ids = list(np.unique(list(predictions_iou.keys())))
+            if not img_ids:
+                continue
+            self.img_ids[iou_type].extend(img_ids)
+            results = self.prepare(predictions_iou, iou_type)
 
             # suppress pycocotools prints
             with open(os.devnull, 'w') as devnull:
                 with contextlib.redirect_stdout(devnull):
-                    coco_dt = self.coco_gt.loadRes(results) if results else COCO()
+                    coco_dt = coco_gt_iou.loadRes(results) if results else COCO()
                     coco_eval.cocoDt = coco_dt
                     coco_eval.params.imgIds = list(img_ids)
                     coco_eval.evaluate()
@@ -61,7 +87,7 @@ class CocoEvaluator(object):
 
     def synchronize_between_processes(self):
         for iou_type in self.iou_types:
-            img_ids, eval_imgs = merge(self.img_ids, self.eval_imgs[iou_type])
+            img_ids, eval_imgs = merge(self.img_ids[iou_type], self.eval_imgs[iou_type])
 
             coco_eval = self.coco_eval[iou_type]
             coco_eval.params.imgIds = img_ids
@@ -93,10 +119,9 @@ class CocoEvaluator(object):
             if len(prediction) == 0:
                 continue
 
-            boxes = prediction["boxes"]
-            boxes = convert_to_xywh(boxes).tolist()
-            scores = prediction["scores"].tolist()
-            labels = prediction["labels"].tolist()
+            boxes = convert_to_xywh(prediction["boxes"].detach().cpu()).tolist()
+            scores = prediction["scores"].detach().cpu().tolist()
+            labels = prediction["labels"].detach().cpu().tolist()
 
             coco_results.extend(
                 [
@@ -117,14 +142,23 @@ class CocoEvaluator(object):
             if len(prediction) == 0:
                 continue
 
-            scores = prediction["scores"]
-            labels = prediction["labels"]
-            masks = prediction["masks"]
+            scores = prediction["scores"].detach().cpu()
+            labels = prediction["labels"].detach().cpu()
+            masks = prediction["masks"].detach().cpu()
+            if self.segm_eval_category_ids:
+                keep = torch.zeros_like(labels, dtype=torch.bool)
+                for cat_id in self.segm_eval_category_ids:
+                    keep |= labels == cat_id
+                if not keep.any():
+                    continue
+                scores = scores[keep]
+                labels = labels[keep]
+                masks = masks[keep]
 
             masks = masks > 0.5
 
-            scores = prediction["scores"].tolist()
-            labels = prediction["labels"].tolist()
+            scores = scores.tolist()
+            labels = labels.tolist()
 
             rles = [
                 mask_util.encode(np.array(mask[0, :, :, np.newaxis], dtype=np.uint8, order="F"))[0]
@@ -152,12 +186,10 @@ class CocoEvaluator(object):
             if len(prediction) == 0:
                 continue
 
-            boxes = prediction["boxes"]
-            boxes = convert_to_xywh(boxes).tolist()
-            scores = prediction["scores"].tolist()
-            labels = prediction["labels"].tolist()
-            keypoints = prediction["keypoints"]
-            keypoints = keypoints.flatten(start_dim=1).tolist()
+            boxes = convert_to_xywh(prediction["boxes"].detach().cpu()).tolist()
+            scores = prediction["scores"].detach().cpu().tolist()
+            labels = prediction["labels"].detach().cpu().tolist()
+            keypoints = prediction["keypoints"].detach().cpu().flatten(start_dim=1).tolist()
 
             coco_results.extend(
                 [
@@ -178,6 +210,9 @@ def convert_to_xywh(boxes):
     return torch.stack((xmin, ymin, xmax - xmin, ymax - ymin), dim=1)
 
 def merge(img_ids, eval_imgs):
+    if not img_ids or not eval_imgs:
+        return [], []
+
     all_img_ids = dist_utils.all_gather(img_ids)
     all_eval_imgs = dist_utils.all_gather(eval_imgs)
 

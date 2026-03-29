@@ -10,6 +10,7 @@ from torch.utils.data import DataLoader
 
 import re
 import copy
+from functools import partial
 
 from ._config import BaseConfig
 from .workspace import create
@@ -90,7 +91,7 @@ class YAMLConfig(BaseConfig):
 
     @property
     def scaler(self, ):
-        if self._scaler is None and self.yaml_cfg.get('use_amp', False):
+        if self._scaler is None and self.yaml_cfg.get('use_amp', False) and self.get_amp_dtype() == torch.float16:
             self._scaler = create('scaler', self.global_cfg)
         return super().scaler
 
@@ -98,9 +99,31 @@ class YAMLConfig(BaseConfig):
     def evaluator(self, ):
         if self._evaluator is None and 'evaluator' in self.yaml_cfg:
             if self.yaml_cfg['evaluator']['type'] == 'CocoEvaluator':
-                from ..data import get_coco_api_from_dataset
-                base_ds = get_coco_api_from_dataset(self.val_dataloader.dataset)
-                self._evaluator = create('evaluator', self.global_cfg, coco_gt=base_ds)
+                from ..data import (
+                    get_coco_api_from_annotation_file,
+                    get_coco_api_from_dataset,
+                    get_coco_api_from_dataset_for_segm,
+                )
+                bbox_ds = get_coco_api_from_dataset(self.val_dataloader.dataset)
+                iou_types = self.yaml_cfg['evaluator'].get('iou_types', [])
+                if 'segm' in iou_types:
+                    segm_ann_file = self.yaml_cfg['val_dataloader']['dataset'].get('segm_ann_file', None)
+                    if segm_ann_file is not None:
+                        segm_ds = get_coco_api_from_annotation_file(
+                            segm_ann_file,
+                            category_ids=self.yaml_cfg.get('segm_eval_category_ids', None),
+                            ignore_missing_masks=self.yaml_cfg.get('segm_ignore_missing_masks', True),
+                        )
+                    else:
+                        segm_ds = get_coco_api_from_dataset_for_segm(
+                            self.val_dataloader.dataset,
+                            category_ids=self.yaml_cfg.get('segm_eval_category_ids', None),
+                            ignore_missing_masks=self.yaml_cfg.get('segm_ignore_missing_masks', True),
+                        )
+                    coco_gt = {'bbox': bbox_ds, 'segm': segm_ds}
+                else:
+                    coco_gt = bbox_ds
+                self._evaluator = create('evaluator', self.global_cfg, coco_gt=coco_gt)
             else:
                 raise NotImplementedError(f"{self.yaml_cfg['evaluator']['type']}")
         return super().evaluator
@@ -169,6 +192,20 @@ class YAMLConfig(BaseConfig):
             # pop unexpected key for dataloader init
             _ = global_cfg[name].pop('total_batch_size')
         print(f'building {name} with batch_size={bs}...')
-        loader = create(name, global_cfg, batch_size=bs)
+        from ..misc import dist_utils
+        base_seed = 0 if self.seed is None else int(self.seed)
+        rank = dist_utils.get_rank()
+        generator = dist_utils.build_dataloader_generator(base_seed, rank)
+        worker_init_fn = partial(dist_utils.seed_dataloader_worker, base_seed=base_seed, rank=rank)
+        loader = create(
+            name,
+            global_cfg,
+            batch_size=bs,
+            generator=generator,
+            worker_init_fn=worker_init_fn,
+        )
+        loader._resume_generator = generator
+        loader._resume_seed_base = base_seed
+        loader._resume_rank = rank
         loader.shuffle = self.yaml_cfg[name].get('shuffle', False)
         return loader

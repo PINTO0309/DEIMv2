@@ -33,7 +33,10 @@ class LinearKMaskedBias(nn.Linear):
         o = self.out_features
         assert o % 3 == 0
         if self.bias is not None:
-            self.register_buffer("bias_mask", torch.full_like(self.bias, fill_value=math.nan))
+            # QKV projection is laid out as [Q, K, V]. Mask only the K bias term.
+            bias_mask = torch.ones_like(self.bias)
+            bias_mask[o // 3: 2 * o // 3] = 0
+            self.register_buffer("bias_mask", bias_mask)
 
     def forward(self, input: Tensor) -> Tensor:
         masked_bias = self.bias * self.bias_mask.to(self.bias.dtype) if self.bias is not None else None

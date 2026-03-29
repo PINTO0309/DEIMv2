@@ -79,9 +79,11 @@ uv run python demo/wholebody40/demo_deimv2_onnx_wholebody40_with_edges.py \
 -dti \
 -dhd
 ```
+
 |Image|Image|
 |:-:|:-:|
 |![000000009420](https://github.com/user-attachments/assets/a12b8f9d-0277-4a3c-8f06-faa58cfc06f8)|![000000014428](https://github.com/user-attachments/assets/f62fe90f-4933-4702-a0c3-438ded0790cd)|
+
 ### USBCam or Video files
 ```bash
 uv run python demo/wholebody40/demo_deimv2_onnx_wholebody40_with_edges.py \
@@ -93,3 +95,29 @@ uv run python demo/wholebody40/demo_deimv2_onnx_wholebody40_with_edges.py \
 -dnm \
 -dhm
 ```
+
+## PyTorch Checkpoint Demo
+You can use either `best_stg2.pth` or `last_full_epoch.pth`. If the checkpoint contains `ema.module`, it will be used first; otherwise `model` will be used.
+
+### Image folder
+```bash
+uv run python demo/wholebody40/demo_deimv2_torch_wholebody40_ins.py \
+-c configs/deimv2/deimv2_dinov3_x_wholebody40_ins_s08.yml \
+-r outputs/deimv2_dinov3_x_wholebody40_ins/last_full_epoch.pth \
+-i images_partial \
+-o outputs/demo_wholebody40_torch \
+-d cuda \
+--score_threshold 0.35 \
+--mask_threshold 0.5 \
+--disable_generation_identification_mode \
+--disable_gender_identification_mode \
+--disable_headpose_identification_mode \
+--disable_head_distance_measurement
+```
+
+- Runs inference on all `jpg/jpeg/png/bmp/webp` images in the input folder.
+- Saves rendered outputs to `-o/--output_dir` while preserving the original filenames.
+- By default, it draws bounding boxes for all 40 classes and overlays a semi-transparent mask only for body predictions (`classid=0`).
+- Body mask resize uses `center` origin by default. You can compare against the legacy behavior with `--mask_resize_origin topleft`.
+- If you specify `--disable_render_classids 0`, both the body bounding box and the body mask are hidden.
+- If you add `--save_raw_predictions`, the script saves `labels/scores/boxes` and body `mask_area/mask_bbox` to `predictions/*.json`.

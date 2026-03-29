@@ -15,7 +15,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import torch.nn.init as init
-from typing import List
+from typing import List, Optional
 
 from ..core import register
 from .denoising import get_contrastive_denoising_training_group
@@ -188,34 +188,47 @@ class TransformerDecoder(nn.Module):
 
             output = layer(output, ref_points_input, value, spatial_shapes, attn_mask, query_pos_embed)
 
-            if i == 0 :
-                # Initial bounding box predictions with inverse sigmoid refinement
-                pre_bboxes = F.sigmoid(pre_bbox_head(output) + inverse_sigmoid(ref_points_detach))
-                pre_scores = score_head[0](output)
-                ref_points_initial = pre_bboxes.detach()
+            with torch.autocast(device_type=output.device.type, enabled=False):
+                output_fp32 = output.float()
+                ref_points_detach_fp32 = ref_points_detach.float()
+                output_detach_fp32 = output_detach.float() if torch.is_tensor(output_detach) else 0.0
+                pred_corners_undetach_fp32 = pred_corners_undetach.float() if torch.is_tensor(pred_corners_undetach) else 0.0
 
-            # Refine bounding box corners using FDR, integrating previous layer's corrections
-            pred_corners = bbox_head[i](output + output_detach) + pred_corners_undetach
-            inter_ref_bbox = distance2bbox(ref_points_initial, integral(pred_corners, project), reg_scale)
+                if i == 0 :
+                    # Initial bounding box predictions with inverse sigmoid refinement
+                    pre_bboxes = F.sigmoid(pre_bbox_head(output_fp32) + inverse_sigmoid(ref_points_detach_fp32))
+                    pre_bboxes = pre_bboxes.clamp(0.0, 1.0)
+                    pre_scores = score_head[0](output_fp32)
+                    ref_points_initial = pre_bboxes.detach()
 
-            if self.training or i == self.eval_idx:
-                scores = score_head[i](output)
-                # Lqe does not affect the performance here.
-                scores = self.lqe_layers[i](scores, pred_corners)
-                dec_out_logits.append(scores)
-                dec_out_bboxes.append(inter_ref_bbox)
-                dec_out_pred_corners.append(pred_corners)
-                dec_out_refs.append(ref_points_initial)
+                # Refine bounding box corners using FDR, integrating previous layer's corrections
+                pred_corners = bbox_head[i](output_fp32 + output_detach_fp32) + pred_corners_undetach_fp32
+                pred_corners = pred_corners.clamp(min=-64.0, max=64.0)
+                inter_ref_bbox = distance2bbox(
+                    ref_points_initial.float(),
+                    integral(pred_corners, project.float()),
+                    reg_scale.float(),
+                )
+                inter_ref_bbox = inter_ref_bbox.nan_to_num(nan=0.5, posinf=1.0, neginf=0.0).clamp(0.0, 1.0)
 
-                if not self.training:
-                    break
+                if self.training or i == self.eval_idx:
+                    scores = score_head[i](output_fp32)
+                    # Lqe does not affect the performance here.
+                    scores = self.lqe_layers[i](scores, pred_corners)
+                    dec_out_logits.append(scores)
+                    dec_out_bboxes.append(inter_ref_bbox)
+                    dec_out_pred_corners.append(pred_corners)
+                    dec_out_refs.append(ref_points_initial)
+
+                    if not self.training:
+                        break
 
             pred_corners_undetach = pred_corners
             ref_points_detach = inter_ref_bbox.detach()
             output_detach = output.detach()
 
         return torch.stack(dec_out_bboxes), torch.stack(dec_out_logits), \
-               torch.stack(dec_out_pred_corners), torch.stack(dec_out_refs), pre_bboxes, pre_scores
+               torch.stack(dec_out_pred_corners), torch.stack(dec_out_refs), pre_bboxes, pre_scores, output
 
 
 @register()
@@ -249,6 +262,10 @@ class DEIMTransformer(nn.Module):
                  reg_scale=4.,
                  layer_scale=1,
                  mlp_act='relu',
+                 mask_feature_level=0,
+                 use_contour_aux_head=False,
+                 use_distance_aux_head=False,
+                 aux_mask_feature_level=None,
                  use_gateway=True,
                  share_bbox_head=False,
                  share_score_head=False,
@@ -272,6 +289,10 @@ class DEIMTransformer(nn.Module):
         self.eval_spatial_size = eval_spatial_size
         self.aux_loss = aux_loss
         self.reg_max = reg_max
+        self.mask_feature_level = mask_feature_level
+        self.use_contour_aux_head = use_contour_aux_head
+        self.use_distance_aux_head = use_distance_aux_head
+        self.aux_mask_feature_level = mask_feature_level if aux_mask_feature_level is None else aux_mask_feature_level
 
         assert query_select_method in ('default', 'one2many', 'agnostic'), ''
         assert cross_attn_method in ('default', 'discrete'), ''
@@ -314,6 +335,26 @@ class DEIMTransformer(nn.Module):
         self.enc_bbox_head = MLP(hidden_dim, hidden_dim, 4, 3, act=mlp_act)
 
         self.query_pos_head = MLP(4, hidden_dim, hidden_dim, 3, act=mlp_act)
+        self.mask_embed_head = MLP(hidden_dim, hidden_dim, hidden_dim, 3, act=mlp_act)
+        self.mask_feature_head = nn.Sequential(OrderedDict([
+            ('conv', nn.Conv2d(hidden_dim, hidden_dim, 3, padding=1, bias=False)),
+            ('norm', nn.BatchNorm2d(hidden_dim)),
+            ('act', get_activation(activation)),
+        ]))
+        if self.use_contour_aux_head:
+            self.contour_embed_head = MLP(hidden_dim, hidden_dim, hidden_dim, 3, act=mlp_act)
+            self.contour_feature_head = nn.Sequential(OrderedDict([
+                ('conv', nn.Conv2d(hidden_dim, hidden_dim, 3, padding=1, bias=False)),
+                ('norm', nn.BatchNorm2d(hidden_dim)),
+                ('act', get_activation(activation)),
+            ]))
+        if self.use_distance_aux_head:
+            self.distance_embed_head = MLP(hidden_dim, hidden_dim, hidden_dim, 3, act=mlp_act)
+            self.distance_feature_head = nn.Sequential(OrderedDict([
+                ('conv', nn.Conv2d(hidden_dim, hidden_dim, 3, padding=1, bias=False)),
+                ('norm', nn.BatchNorm2d(hidden_dim)),
+                ('act', get_activation(activation)),
+            ]))
 
         # decoder head
         self.pre_bbox_head = MLP(hidden_dim, hidden_dim, 4, 3, act=mlp_act)
@@ -349,6 +390,57 @@ class DEIMTransformer(nn.Module):
             [self.dec_bbox_head[i] if i <= self.eval_idx else nn.Identity() for i in range(len(self.dec_bbox_head))]
         )
 
+    def get_extra_state(self):
+        return {
+            'hidden_dim': self.hidden_dim,
+            'feat_strides': copy.deepcopy(self.feat_strides),
+            'num_levels': self.num_levels,
+            'num_classes': self.num_classes,
+            'num_queries': self.num_queries,
+            'eps': self.eps,
+            'num_layers': self.num_layers,
+            'eval_spatial_size': None if self.eval_spatial_size is None else list(self.eval_spatial_size),
+            'aux_loss': self.aux_loss,
+            'reg_max': self.reg_max,
+            'mask_feature_level': self.mask_feature_level,
+            'use_contour_aux_head': self.use_contour_aux_head,
+            'use_distance_aux_head': self.use_distance_aux_head,
+            'aux_mask_feature_level': self.aux_mask_feature_level,
+            'cross_attn_method': self.cross_attn_method,
+            'query_select_method': self.query_select_method,
+            'num_denoising': self.num_denoising,
+            'label_noise_ratio': self.label_noise_ratio,
+            'box_noise_scale': self.box_noise_scale,
+            'learn_query_content': self.learn_query_content,
+            'eval_idx': self.eval_idx,
+        }
+
+    def set_extra_state(self, state):
+        if not state:
+            return
+        self.hidden_dim = state.get('hidden_dim', self.hidden_dim)
+        self.feat_strides = state.get('feat_strides', self.feat_strides)
+        self.num_levels = state.get('num_levels', self.num_levels)
+        self.num_classes = state.get('num_classes', self.num_classes)
+        self.num_queries = state.get('num_queries', self.num_queries)
+        self.eps = state.get('eps', self.eps)
+        self.num_layers = state.get('num_layers', self.num_layers)
+        eval_spatial_size = state.get('eval_spatial_size', self.eval_spatial_size)
+        self.eval_spatial_size = None if eval_spatial_size is None else tuple(eval_spatial_size)
+        self.aux_loss = state.get('aux_loss', self.aux_loss)
+        self.reg_max = state.get('reg_max', self.reg_max)
+        self.mask_feature_level = state.get('mask_feature_level', self.mask_feature_level)
+        self.use_contour_aux_head = state.get('use_contour_aux_head', self.use_contour_aux_head)
+        self.use_distance_aux_head = state.get('use_distance_aux_head', self.use_distance_aux_head)
+        self.aux_mask_feature_level = state.get('aux_mask_feature_level', self.aux_mask_feature_level)
+        self.cross_attn_method = state.get('cross_attn_method', self.cross_attn_method)
+        self.query_select_method = state.get('query_select_method', self.query_select_method)
+        self.num_denoising = state.get('num_denoising', self.num_denoising)
+        self.label_noise_ratio = state.get('label_noise_ratio', self.label_noise_ratio)
+        self.box_noise_scale = state.get('box_noise_scale', self.box_noise_scale)
+        self.learn_query_content = state.get('learn_query_content', self.learn_query_content)
+        self.eval_idx = state.get('eval_idx', self.eval_idx)
+
     def _reset_parameters(self, feat_channels):
         bias = bias_init_with_prob(0.01)
         init.constant_(self.enc_score_head.bias, bias)
@@ -369,9 +461,57 @@ class DEIMTransformer(nn.Module):
         init.xavier_uniform_(self.query_pos_head.layers[0].weight)
         init.xavier_uniform_(self.query_pos_head.layers[1].weight)
         init.xavier_uniform_(self.query_pos_head.layers[-1].weight)
+        init.xavier_uniform_(self.mask_embed_head.layers[0].weight)
+        init.xavier_uniform_(self.mask_embed_head.layers[1].weight)
+        init.xavier_uniform_(self.mask_embed_head.layers[-1].weight)
+        if self.use_contour_aux_head:
+            init.xavier_uniform_(self.contour_embed_head.layers[0].weight)
+            init.xavier_uniform_(self.contour_embed_head.layers[1].weight)
+            init.xavier_uniform_(self.contour_embed_head.layers[-1].weight)
+        if self.use_distance_aux_head:
+            init.xavier_uniform_(self.distance_embed_head.layers[0].weight)
+            init.xavier_uniform_(self.distance_embed_head.layers[1].weight)
+            init.xavier_uniform_(self.distance_embed_head.layers[-1].weight)
         for m, in_channels in zip(self.input_proj, feat_channels):
             if in_channels != self.hidden_dim:
                 init.xavier_uniform_(m[0].weight)
+
+    def _get_mask_logits(self, query_features: torch.Tensor, mask_features: torch.Tensor) -> torch.Tensor:
+        mask_embed = self.mask_embed_head(query_features)
+        return torch.einsum('bqc,bchw->bqhw', mask_embed, mask_features)
+
+    def _get_aux_mask_logits(
+        self,
+        query_features: torch.Tensor,
+        mask_features: torch.Tensor,
+        embed_head: MLP,
+    ) -> torch.Tensor:
+        mask_embed = embed_head(query_features)
+        return torch.einsum('bqc,bchw->bqhw', mask_embed, mask_features)
+
+    def _validate_feature_level(self, feature_level: int, feats: List[torch.Tensor], feature_name: str) -> None:
+        if 0 <= feature_level < len(feats):
+            return
+        upper_bound = len(feats) - 1
+        raise ValueError(
+            f'Invalid {feature_name}={feature_level}. '
+            f'Received {len(feats)} feature levels, expected index range [0, {upper_bound}].'
+        )
+
+    def _maybe_get_aux_mask_features(self, feats: List[torch.Tensor]) -> tuple[Optional[torch.Tensor], Optional[torch.Tensor]]:
+        contour_features = None
+        distance_features = None
+        if not self.training:
+            return contour_features, distance_features
+
+        if self.use_contour_aux_head or self.use_distance_aux_head:
+            self._validate_feature_level(self.aux_mask_feature_level, feats, 'aux_mask_feature_level')
+
+        if self.use_contour_aux_head:
+            contour_features = self.contour_feature_head(feats[self.aux_mask_feature_level])
+        if self.use_distance_aux_head:
+            distance_features = self.distance_feature_head(feats[self.aux_mask_feature_level])
+        return contour_features, distance_features
 
     def _build_input_proj_layer(self, feat_channels):
         self.input_proj = nn.ModuleList()
@@ -477,11 +617,12 @@ class DEIMTransformer(nn.Module):
         enc_topk_memory, enc_topk_logits, enc_topk_anchors = \
             self._select_topk(memory, enc_outputs_logits, anchors, self.num_queries)
 
-        enc_topk_bbox_unact :torch.Tensor = self.enc_bbox_head(enc_topk_memory) + enc_topk_anchors
+        with torch.autocast(device_type=memory.device.type, enabled=False):
+            enc_topk_bbox_unact :torch.Tensor = self.enc_bbox_head(enc_topk_memory.float()) + enc_topk_anchors.float()
 
         enc_topk_bboxes_list, enc_topk_logits_list = [], []
         if self.training:
-            enc_topk_bboxes = F.sigmoid(enc_topk_bbox_unact)
+            enc_topk_bboxes = F.sigmoid(enc_topk_bbox_unact).clamp(0.0, 1.0)
             enc_topk_bboxes_list.append(enc_topk_bboxes)
             enc_topk_logits_list.append(enc_topk_logits)
 
@@ -523,7 +664,10 @@ class DEIMTransformer(nn.Module):
 
     def forward(self, feats, targets=None):
         # input projection and embedding
+        self._validate_feature_level(self.mask_feature_level, feats, 'mask_feature_level')
         memory, spatial_shapes = self._get_encoder_input(feats)
+        mask_features = self.mask_feature_head(feats[self.mask_feature_level])
+        contour_features, distance_features = self._maybe_get_aux_mask_features(feats)
 
         # prepare denoising training
         if self.training and self.num_denoising > 0:
@@ -543,7 +687,7 @@ class DEIMTransformer(nn.Module):
             self._get_decoder_input(memory, spatial_shapes, denoising_logits, denoising_bbox_unact)
 
         # decoder
-        out_bboxes, out_logits, out_corners, out_refs, pre_bboxes, pre_logits = self.decoder(
+        out_bboxes, out_logits, out_corners, out_refs, pre_bboxes, pre_logits, out_queries = self.decoder(
             init_ref_contents,
             init_ref_points_unact,
             memory,
@@ -568,12 +712,27 @@ class DEIMTransformer(nn.Module):
 
             dn_out_corners, out_corners = torch.split(out_corners, dn_meta['dn_num_split'], dim=2)
             dn_out_refs, out_refs = torch.split(out_refs, dn_meta['dn_num_split'], dim=2)
+            _, out_queries = torch.split(out_queries, dn_meta['dn_num_split'], dim=1)
 
         if self.training:
             out = {'pred_logits': out_logits[-1], 'pred_boxes': out_bboxes[-1], 'pred_corners': out_corners[-1],
-                   'ref_points': out_refs[-1], 'up': self.up, 'reg_scale': self.reg_scale}
+                   'ref_points': out_refs[-1], 'up': self.up, 'reg_scale': self.reg_scale,
+                   'pred_masks': self._get_mask_logits(out_queries, mask_features)}
+            if self.use_contour_aux_head and contour_features is not None:
+                out['pred_mask_contours'] = self._get_aux_mask_logits(
+                    out_queries,
+                    contour_features,
+                    self.contour_embed_head,
+                )
+            if self.use_distance_aux_head and distance_features is not None:
+                out['pred_mask_distances'] = self._get_aux_mask_logits(
+                    out_queries,
+                    distance_features,
+                    self.distance_embed_head,
+                )
         else:
-            out = {'pred_logits': out_logits[-1], 'pred_boxes': out_bboxes[-1]}
+            out = {'pred_logits': out_logits[-1], 'pred_boxes': out_bboxes[-1],
+                   'pred_masks': self._get_mask_logits(out_queries, mask_features)}
 
         if self.training and self.aux_loss:
             out['aux_outputs'] = self._set_aux_loss2(out_logits[:-1], out_bboxes[:-1], out_corners[:-1], out_refs[:-1],

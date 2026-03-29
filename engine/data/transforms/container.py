@@ -8,6 +8,7 @@ Copyright (c) 2024 D-FINE authors. All Rights Reserved.
 
 import torch
 import torch.nn as nn
+import copy
 
 import torchvision
 import torchvision.transforms.v2 as T
@@ -22,13 +23,20 @@ import random
 
 @register()
 class Compose(T.Compose):
-    def __init__(self, ops, policy=None, mosaic_prob=-0.1) -> None:
+    __share__ = ['mask_resize_origin']
+
+    def __init__(self, ops, policy=None, mosaic_prob=-0.1, mask_resize_origin='center') -> None:
         transforms = []
+        self.mask_resize_origin = mask_resize_origin
         if ops is not None:
             for op in ops:
                 if isinstance(op, dict):
                     name = op.pop('type')
-                    transform = getattr(GLOBAL_CONFIG[name]['_pymodule'], GLOBAL_CONFIG[name]['_name'])(**op)
+                    transform_kwargs = dict(op)
+                    for shared_name in GLOBAL_CONFIG[name].get('_share', []):
+                        if shared_name not in transform_kwargs and hasattr(self, shared_name):
+                            transform_kwargs[shared_name] = getattr(self, shared_name)
+                    transform = getattr(GLOBAL_CONFIG[name]['_pymodule'], GLOBAL_CONFIG[name]['_name'])(**transform_kwargs)
                     transforms.append(transform)
                     op['type'] = name
                     print("     ### Transform @{} ###    ".format(type(transform).__name__))
@@ -53,6 +61,27 @@ class Compose(T.Compose):
             print('     ### Policy_ops@{} ###'.format(policy['ops']))
         self.global_samples = 0
         self.policy = policy
+
+    def state_dict(self):
+        return {
+            'global_samples': self.global_samples,
+            'policy': copy.deepcopy(self.policy),
+            'mosaic_prob': self.mosaic_prob,
+            'transform_states': [
+                transform.state_dict() if hasattr(transform, 'state_dict') else None
+                for transform in self.transforms
+            ],
+        }
+
+    def load_state_dict(self, state_dict):
+        self.global_samples = state_dict.get('global_samples', 0)
+        self.policy = copy.deepcopy(state_dict.get('policy', self.policy))
+        self.mosaic_prob = state_dict.get('mosaic_prob', self.mosaic_prob)
+
+        transform_states = state_dict.get('transform_states', [])
+        for transform, transform_state in zip(self.transforms, transform_states):
+            if transform_state is not None and hasattr(transform, 'load_state_dict'):
+                transform.load_state_dict(transform_state)
 
     def forward(self, *inputs: Any) -> Any:
         return self.get_forward(self.policy['name'])(*inputs)

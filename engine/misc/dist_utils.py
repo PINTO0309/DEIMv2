@@ -11,6 +11,7 @@ import time
 import random
 import numpy as np
 import atexit
+import copy
 
 import torch
 import torch.nn as nn
@@ -215,6 +216,66 @@ def all_gather(data):
     data_list = [None] * world_size
     torch.distributed.all_gather_object(data_list, data)
     return data_list
+
+
+def capture_rng_state():
+    state = {
+        'python': copy.deepcopy(random.getstate()),
+        'numpy': copy.deepcopy(np.random.get_state()),
+        'torch': torch.get_rng_state().clone(),
+    }
+    if torch.cuda.is_available():
+        state['cuda'] = [x.clone() for x in torch.cuda.get_rng_state_all()]
+    return state
+
+
+def restore_rng_state(state):
+    if not state:
+        return
+
+    if 'python' in state:
+        random.setstate(state['python'])
+    if 'numpy' in state:
+        np.random.set_state(state['numpy'])
+    if 'torch' in state:
+        torch.set_rng_state(state['torch'])
+    if 'cuda' in state and torch.cuda.is_available():
+        torch.cuda.set_rng_state_all(state['cuda'])
+
+
+def capture_backend_state():
+    return {
+        'cudnn_benchmark': torch.backends.cudnn.benchmark,
+        'cudnn_deterministic': torch.backends.cudnn.deterministic,
+    }
+
+
+def restore_backend_state(state):
+    if not state:
+        return
+
+    if 'cudnn_benchmark' in state:
+        torch.backends.cudnn.benchmark = state['cudnn_benchmark']
+    if 'cudnn_deterministic' in state:
+        torch.backends.cudnn.deterministic = state['cudnn_deterministic']
+
+
+def seed_dataloader_worker(worker_id, base_seed, rank):
+    worker_info = torch.utils.data.get_worker_info()
+    epoch = -1
+    if worker_info is not None and hasattr(worker_info.dataset, 'epoch'):
+        epoch = worker_info.dataset.epoch
+    epoch = max(int(epoch), 0)
+    worker_seed = (int(base_seed) + int(rank) * 1000003 + epoch * 10007 + int(worker_id)) % (2 ** 32)
+    random.seed(worker_seed)
+    np.random.seed(worker_seed)
+    torch.manual_seed(worker_seed)
+
+
+def build_dataloader_generator(base_seed, rank):
+    generator = torch.Generator()
+    generator.manual_seed(int(base_seed) + int(rank))
+    return generator
 
 
 def sync_time():
