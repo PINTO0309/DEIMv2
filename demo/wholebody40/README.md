@@ -108,7 +108,11 @@ uv run python demo/wholebody40/demo_deimv2_torch_wholebody40_ins.py \
 -o outputs/demo_wholebody40_torch \
 -d cuda \
 --score_threshold 0.35 \
---mask_threshold 0.5
+--mask_threshold 0.5 \
+--disable_generation_identification_mode \
+--disable_gender_identification_mode \
+--disable_headpose_identification_mode \
+--disable_head_distance_measurement
 ```
 
 - Runs inference on all `jpg/jpeg/png/bmp/webp` images in the input folder.

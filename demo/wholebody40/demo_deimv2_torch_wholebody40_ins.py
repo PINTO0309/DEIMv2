@@ -412,6 +412,7 @@ def overlay_body_masks(
     result: Dict[str, torch.Tensor],
     boxes: List[Box],
     mask_threshold: float,
+    mask_alpha: int,
     disable_render_classids: set[int],
 ) -> Image.Image:
     masks = result.get('masks')
@@ -429,7 +430,7 @@ def overlay_body_masks(
         if not binary_mask.any():
             continue
         instance_color = make_instance_color(body_instance_idx)
-        overlay[binary_mask] = np.array([instance_color[0], instance_color[1], instance_color[2], 128], dtype=np.uint8)
+        overlay[binary_mask] = np.array([instance_color[0], instance_color[1], instance_color[2], mask_alpha], dtype=np.uint8)
         body_instance_idx += 1
 
     if overlay[..., 3].max() == 0:
@@ -930,6 +931,7 @@ def process_images(args) -> None:
             result=result,
             boxes=boxes,
             mask_threshold=args.mask_threshold,
+            mask_alpha=args.mask_alpha,
             disable_render_classids=disable_render_classids,
         )
         rendered = draw_detections(
@@ -968,6 +970,12 @@ def parse_args():
             raise argparse.ArgumentTypeError(f'Invalid value: {ivalue}. Please specify an integer of 2 or greater.')
         return ivalue
 
+    def check_alpha(value: str) -> int:
+        ivalue = int(value)
+        if not 0 <= ivalue <= 255:
+            raise argparse.ArgumentTypeError(f'Invalid value: {ivalue}. Please specify an integer in the range 0-255.')
+        return ivalue
+
     parser = argparse.ArgumentParser()
     parser.add_argument('-c', '--config', type=str, default=DEFAULT_CONFIG)
     parser.add_argument('-r', '--resume', type=str, required=True)
@@ -979,6 +987,7 @@ def parse_args():
     parser.add_argument('--attribute_score_threshold', '--attribute_socre_threshold', dest='attribute_score_threshold', type=float, default=None)
     parser.add_argument('--keypoint_threshold', type=float, default=None)
     parser.add_argument('--mask_threshold', type=float, default=0.5)
+    parser.add_argument('--mask_alpha', type=check_alpha, default=128)
     parser.add_argument('--keypoint_drawing_mode', type=str, choices=['dot', 'box', 'both'], default='dot')
     parser.add_argument('--enable_bone_drawing_mode', action='store_true')
     parser.add_argument('--disable_generation_identification_mode', action='store_true')
