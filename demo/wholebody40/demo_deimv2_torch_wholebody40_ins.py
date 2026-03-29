@@ -429,7 +429,7 @@ def overlay_body_masks(
         if not binary_mask.any():
             continue
         instance_color = make_instance_color(body_instance_idx)
-        overlay[binary_mask] = np.array([instance_color[0], instance_color[1], instance_color[2], 96], dtype=np.uint8)
+        overlay[binary_mask] = np.array([instance_color[0], instance_color[1], instance_color[2], 128], dtype=np.uint8)
         body_instance_idx += 1
 
     if overlay[..., 3].max() == 0:
