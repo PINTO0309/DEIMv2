@@ -43,7 +43,7 @@ DEIMTransformer:
   mask_feature_level: 0 # 0=stride16, 1=stride32
   use_contour_aux_head: False
   use_distance_aux_head: False
-  aux_mask_feature_level: 0
+  aux_mask_feature_level: 0 # 0=stride16, 1=stride32
 
 PostProcessor:
   num_top_queries: 340

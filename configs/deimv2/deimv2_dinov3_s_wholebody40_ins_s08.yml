@@ -6,76 +6,64 @@ __include__: [
   '../base/deimv2.yml',
 ]
 
-output_dir: ./outputs/deimv2_hgnetv2_pico_wholebody40_ins
+output_dir: ./outputs/deimv2_dinov3_s_wholebody40_ins
 
 DEIM:
-  encoder: LiteEncoder
-  decoder: DEIMTransformer
+  backbone: DINOv3STAs
 
-HGNetv2:
-  name: 'Pico'
-  return_idx: [2]
-  freeze_at: -1
-  freeze_norm: False
-  use_lab: True
+DINOv3STAs:
+  name: vit_tiny
+  embed_dim: 192
+  weights_path: ./ckpts/vitt_distill.pt
+  interaction_indexes: [5,8,11]
+  num_heads: 3
 
-LiteEncoder:
-  in_channels: [512]
-  feat_strides: [16]
-
-  hidden_dim: 112
-
+HybridEncoder:
+  in_channels: [192, 192, 192]
+  depth_mult: 0.67
   expansion: 0.34
-  depth_mult: 0.5
-  act: 'silu'
+  hidden_dim: 192
+  dim_feedforward: 512
 
 DEIMTransformer:
-  feat_channels: [112, 112]
-  feat_strides: [16, 32]
-  hidden_dim: 112
-  num_levels: 2
-  num_points: [4, 2]
-
-  num_layers: 3
+  feat_channels: [192, 192, 192]
+  hidden_dim: 192
+  dim_feedforward: 512
+  num_layers: 4
   eval_idx: -1
-  num_queries: 340
-  dim_feedforward: 320
-  share_bbox_head: True
-  use_gateway: False
-  mask_feature_level: 0 # 0=stride16, 1=stride32
+  num_queries: 800
+  mask_feature_level: 0 # 0=stride8, 1=stride16, 2=stride32
   use_contour_aux_head: False
   use_distance_aux_head: False
-  aux_mask_feature_level: 0 # 0=stride16, 1=stride32
+  aux_mask_feature_level: 0 # 0=stride8, 1=stride16, 2=stride32
 
 PostProcessor:
-  num_top_queries: 340
-
-epoches: 500
-
-warmup_iter: 4000
-flat_epoch: 250
-no_aug_epoch: 32
-lr_gamma: 0.5
+  num_top_queries: 800
 
 optimizer:
   type: AdamW
+
   params:
     -
-      params: '^(?=.*backbone)(?!.*norm|bn).*$'
-      lr: 0.0008
+      params: '^(?=.*.dinov3)(?!.*(?:norm|bn|bias)).*$'
+      lr: 0.000025
     -
-      params: '^(?=.*backbone)(?=.*norm|bn).*$'
-      lr: 0.0008
+      params: '^(?=.*.dinov3)(?=.*(?:norm|bn|bias)).*$'
+      lr: 0.000025
       weight_decay: 0.
     -
-      params: '^(?=.*(?:encoder|decoder))(?=.*(?:norm|bn|bias)).*$'
+      params: '^(?=.*(?:sta|encoder|decoder))(?=.*(?:norm|bn|bias)).*$'
       weight_decay: 0.
 
-  lr: 0.0004
+  lr: 0.000125
   betas: [0.9, 0.999]
   weight_decay: 0.000025
 
-eval_spatial_size: [640, 640]
+epoches: 132
+
+flat_epoch: 64
+no_aug_epoch: 12
+
 train_dataloader:
   dataset:
     transforms:
@@ -83,28 +71,29 @@ train_dataloader:
         - {type: RandomPhotometricDistort, p: 0.5}
         - {type: RandomZoomOut, p: 0.5, fill: 0, side_range: [1.0, 1.5]}
         - {type: RandomIoUCrop, p: 0.8}
-        - {type: SanitizeBoundingBoxes, min_size: 2}
+        - {type: SanitizeBoundingBoxes, min_size: 1}
         - {type: RandomHorizontalFlipWithClass, class_pairs: [[9, 15], [10, 14], [11, 13], [23, 24], [27, 28], [30, 31], [33, 34]]}
         - {type: Resize, size: [640, 640], }
-        - {type: SanitizeBoundingBoxes, min_size: 2}
+        - {type: SanitizeBoundingBoxes, min_size: 1}
         - {type: ConvertPILImage, dtype: 'float32', scale: True}
+        - {type: Normalize, mean: [0.485, 0.456, 0.406], std: [0.229, 0.224, 0.225]}
         - {type: ConvertBoxes, fmt: 'cxcywh', normalize: True}
       policy:
-        epoch: [4, 250, 400]
+        epoch: [4, 64, 120]
         ops: ['Mosaic', 'RandomPhotometricDistort', 'RandomZoomOut', 'RandomIoUCrop']
       mosaic_prob: -0.1
-  total_batch_size: 6
-  num_workers: 6
+  total_batch_size: 3
+  num_workers: 3
 
   collate_fn:
-    mixup_prob: 0.0
-    mixup_epochs: [40000, 15000]
-    copyblend_prob: 0.0
-    copyblend_epochs: [40000, 15000]
-    stop_epoch: 468
-    ema_restart_decay: 0.9999
     base_size: 640
-    base_size_repeat: ~
+    mixup_prob: 0.0
+    ema_restart_decay: 0.9999
+    base_size_repeat: 20
+    mixup_epochs: [4, 64]
+    stop_epoch: 120
+    copyblend_prob: 0.0
+    copyblend_epochs: [4, 120]
 
 val_dataloader:
   dataset:
@@ -112,7 +101,7 @@ val_dataloader:
       ops:
         - {type: Resize, size: [640, 640], }
         - {type: ConvertPILImage, dtype: 'float32', scale: True}
-  shuffle: False
+        - {type: Normalize, mean: [0.485, 0.456, 0.406], std: [0.229, 0.224, 0.225]}
   total_batch_size: 16
   num_workers: 16
 
@@ -128,14 +117,14 @@ DEIMCriterion:
     loss_mask_boundary: 1.0
     loss_mask_contour: 0.5
     loss_mask_distance: 0.25
-  losses: ['mal', 'boxes', 'masks']
-  use_uni_set: False
+  losses: ['mal', 'boxes', 'local', 'masks']
   use_boundary_aware_loss: False
   boundary_aware_width: 3
   boundary_aware_weight: 2.0
   use_contour_detection: False
   use_distance_transform: False
   distance_transform_steps: 5
-
   matcher:
-    matcher_change_epoch: 450
+    change_matcher: True
+    iou_order_alpha: 4.0
+    matcher_change_epoch: 100
