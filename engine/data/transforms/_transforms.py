@@ -21,19 +21,54 @@ from .._misc import Image, Video, Mask, BoundingBoxes
 from .._misc import SanitizeBoundingBoxes
 
 from ...core import register
+from ...misc.mask_resize import resize_masks
 torchvision.disable_beta_transforms_warning()
 
 
 RandomPhotometricDistort = register()(T.RandomPhotometricDistort)
 RandomZoomOut = register()(T.RandomZoomOut)
 RandomHorizontalFlip = register()(T.RandomHorizontalFlip)
-Resize = register()(T.Resize)
 # ToImageTensor = register()(T.ToImageTensor)
 # ConvertDtype = register()(T.ConvertDtype)
 # PILToTensor = register()(T.PILToTensor)
 SanitizeBoundingBoxes = register(name='SanitizeBoundingBoxes')(SanitizeBoundingBoxes)
 RandomCrop = register()(T.RandomCrop)
 Normalize = register()(T.Normalize)
+
+
+@register()
+class Resize(T.Resize):
+    __share__ = ['mask_resize_origin']
+
+    def __init__(
+        self,
+        size,
+        interpolation=T.InterpolationMode.BILINEAR,
+        max_size: Optional[int] = None,
+        antialias: Optional[bool] = True,
+        mask_resize_origin: str = 'center',
+    ) -> None:
+        super().__init__(size=size, interpolation=interpolation, max_size=max_size, antialias=antialias)
+        self.mask_resize_origin = mask_resize_origin
+
+    def transform(self, inpt: Any, params: Dict[str, Any]) -> Any:
+        if isinstance(inpt, Mask):
+            masks = torch.as_tensor(inpt)
+            squeeze_mask = masks.ndim == 2
+            if squeeze_mask:
+                masks = masks.unsqueeze(0)
+            resized = resize_masks(
+                masks[:, None],
+                size=self.size,
+                max_size=self.max_size,
+                mode='nearest',
+                origin=self.mask_resize_origin,
+            )[:, 0]
+            if squeeze_mask:
+                resized = resized.squeeze(0)
+            return Mask(resized)
+
+        return super().transform(inpt, params)
 
 
 @register()

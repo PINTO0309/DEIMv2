@@ -9,6 +9,7 @@ remap_mscoco_category: False # custom dataset -> False
 mask_category_ids: [0] # body only
 segm_eval_category_ids: [0] # body only
 segm_ignore_missing_masks: True
+mask_resize_origin: center
 
 train_dataloader:
   type: DataLoader

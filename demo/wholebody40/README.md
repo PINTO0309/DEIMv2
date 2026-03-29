@@ -118,5 +118,6 @@ uv run python demo/wholebody40/demo_deimv2_torch_wholebody40_ins.py \
 - Runs inference on all `jpg/jpeg/png/bmp/webp` images in the input folder.
 - Saves rendered outputs to `-o/--output_dir` while preserving the original filenames.
 - By default, it draws bounding boxes for all 40 classes and overlays a semi-transparent mask only for body predictions (`classid=0`).
+- Body mask resize uses `center` origin by default. You can compare against the legacy behavior with `--mask_resize_origin topleft`.
 - If you specify `--disable_render_classids 0`, both the body bounding box and the body mask are hidden.
 - If you add `--save_raw_predictions`, the script saves `labels/scores/boxes` and body `mask_area/mask_bbox` to `predictions/*.json`.

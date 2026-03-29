@@ -23,13 +23,20 @@ import random
 
 @register()
 class Compose(T.Compose):
-    def __init__(self, ops, policy=None, mosaic_prob=-0.1) -> None:
+    __share__ = ['mask_resize_origin']
+
+    def __init__(self, ops, policy=None, mosaic_prob=-0.1, mask_resize_origin='center') -> None:
         transforms = []
+        self.mask_resize_origin = mask_resize_origin
         if ops is not None:
             for op in ops:
                 if isinstance(op, dict):
                     name = op.pop('type')
-                    transform = getattr(GLOBAL_CONFIG[name]['_pymodule'], GLOBAL_CONFIG[name]['_name'])(**op)
+                    transform_kwargs = dict(op)
+                    for shared_name in GLOBAL_CONFIG[name].get('_share', []):
+                        if shared_name not in transform_kwargs and hasattr(self, shared_name):
+                            transform_kwargs[shared_name] = getattr(self, shared_name)
+                    transform = getattr(GLOBAL_CONFIG[name]['_pymodule'], GLOBAL_CONFIG[name]['_name'])(**transform_kwargs)
                     transforms.append(transform)
                     op['type'] = name
                     print("     ### Transform @{} ###    ".format(type(transform).__name__))

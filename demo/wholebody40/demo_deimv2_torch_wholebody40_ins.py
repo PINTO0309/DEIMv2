@@ -814,7 +814,13 @@ def draw_detections(
 
 
 class InferenceModel(nn.Module):
-    def __init__(self, cfg: YAMLConfig, state_dict: Dict[str, torch.Tensor], device: torch.device):
+    def __init__(
+        self,
+        cfg: YAMLConfig,
+        state_dict: Dict[str, torch.Tensor],
+        device: torch.device,
+        mask_resize_origin: str = 'center',
+    ):
         super().__init__()
         matched_state, missing_keys, mismatched_keys, unexpected_keys = matched_tensor_state(
             cfg.model.state_dict(),
@@ -841,6 +847,7 @@ class InferenceModel(nn.Module):
                 print(f'  load_state_dict unexpected keys (first 10): {load_info.unexpected_keys[:10]}')
         self.model = cfg.model.eval().to(device)
         self.postprocessor = cfg.postprocessor.eval()
+        self.postprocessor.mask_resize_origin = mask_resize_origin
         self.device = device
 
     @torch.inference_mode()
@@ -889,7 +896,7 @@ def process_images(args) -> None:
 
     state_dict = load_checkpoint_state(resume_path)
     device = resolve_device(args.device)
-    model = InferenceModel(cfg, state_dict, device)
+    model = InferenceModel(cfg, state_dict, device, mask_resize_origin=args.mask_resize_origin)
 
     image_size = cfg.yaml_cfg['eval_spatial_size']
     normalize = bool(cfg.yaml_cfg.get('DINOv3STAs', False))
@@ -903,6 +910,7 @@ def process_images(args) -> None:
     print(f'Processing {len(image_paths)} images from {images_dir}')
     print(f'Using checkpoint: {resume_path}')
     print(f'Output directory: {output_dir}')
+    print(f'Mask resize origin: {args.mask_resize_origin}')
 
     for idx, image_path in enumerate(image_paths, start=1):
         image = Image.open(image_path).convert('RGB')
@@ -988,6 +996,7 @@ def parse_args():
     parser.add_argument('--keypoint_threshold', type=float, default=None)
     parser.add_argument('--mask_threshold', type=float, default=0.5)
     parser.add_argument('--mask_alpha', type=check_alpha, default=128)
+    parser.add_argument('--mask_resize_origin', type=str, choices=['topleft', 'center'], default='center')
     parser.add_argument('--keypoint_drawing_mode', type=str, choices=['dot', 'box', 'both'], default='dot')
     parser.add_argument('--enable_bone_drawing_mode', action='store_true')
     parser.add_argument('--disable_generation_identification_mode', action='store_true')

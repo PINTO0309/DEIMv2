@@ -20,6 +20,7 @@ from functools import partial
 
 from ..core import register
 from ._misc import convert_to_tv_tensor
+from ..misc.mask_resize import resize_masks
 torchvision.disable_beta_transforms_warning()
 from copy import deepcopy
 from PIL import Image, ImageDraw
@@ -103,6 +104,8 @@ def generate_scales(base_size, base_size_repeat):
 
 @register()
 class BatchImageCollateFunction(BaseCollateFunction):
+    __share__ = ['mask_resize_origin']
+
     def __init__(
         self,
         stop_epoch=None,
@@ -121,7 +124,8 @@ class BatchImageCollateFunction(BaseCollateFunction):
         expand_ratios=[0.1, 0.25],
         random_num_objects=False,
         data_vis=False,
-        vis_save='./vis_dataset/'
+        vis_save='./vis_dataset/',
+        mask_resize_origin='center',
     ) -> None:
         super().__init__()
         self.base_size = base_size
@@ -135,6 +139,7 @@ class BatchImageCollateFunction(BaseCollateFunction):
         self.data_vis, self.vis_save = data_vis, vis_save
         self.with_expand, self.expand_ratios, self.random_num_objects = with_expand, expand_ratios, random_num_objects
         self.conflict_with_mixup = conflict_with_mixup  # 是否冲突
+        self.mask_resize_origin = mask_resize_origin
 
         if self.mixup_prob > 0 or self.copyblend_prob > 0:
             if os.path.isdir(self.vis_save):
@@ -379,14 +384,19 @@ class BatchImageCollateFunction(BaseCollateFunction):
             # VF.resize(inpt, sz, interpolation=self.interpolation)
 
             sz = random.choice(self.scales)
-            images = F.interpolate(images, size=sz)
+            images = F.interpolate(images, size=sz, mode='bilinear', align_corners=False)
             if 'masks' in targets[0]:
                 for tg in targets:
                     masks = tg['masks']
                     if masks.numel() == 0:
                         tg['masks'] = convert_to_tv_tensor(masks, 'masks')
                         continue
-                    masks = F.interpolate(masks[:, None].float(), size=sz, mode='nearest')[:, 0] > 0.5
+                    masks = resize_masks(
+                        masks[:, None],
+                        size=sz,
+                        mode='nearest',
+                        origin=self.mask_resize_origin,
+                    )[:, 0]
                     tg['masks'] = convert_to_tv_tensor(masks, 'masks')
 
         return images, targets

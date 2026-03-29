@@ -8,6 +8,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 from ..core import register
+from ..misc.mask_resize import resize_masks
 
 
 __all__ = ['PostProcessor']
@@ -24,7 +25,8 @@ class PostProcessor(nn.Module):
         'num_classes',
         'use_focal_loss',
         'num_top_queries',
-        'remap_mscoco_category'
+        'remap_mscoco_category',
+        'mask_resize_origin',
     ]
 
     def __init__(
@@ -32,7 +34,8 @@ class PostProcessor(nn.Module):
         num_classes=80,
         use_focal_loss=True,
         num_top_queries=300,
-        remap_mscoco_category=False
+        remap_mscoco_category=False,
+        mask_resize_origin='center',
     ) -> None:
         super().__init__()
         self.use_focal_loss = use_focal_loss
@@ -40,6 +43,7 @@ class PostProcessor(nn.Module):
         self.num_classes = int(num_classes)
         self.remap_mscoco_category = remap_mscoco_category
         self.deploy_mode = False
+        self.mask_resize_origin = mask_resize_origin
 
     def extra_repr(self) -> str:
         return f'use_focal_loss={self.use_focal_loss}, num_classes={self.num_classes}, num_top_queries={self.num_top_queries}'
@@ -65,6 +69,14 @@ class PostProcessor(nn.Module):
         y2 = cy + 0.5 * h
         boxes = torch.cat([x1, y1, x2, y2], dim=2)
         return boxes
+
+    def resize_masks(self, mask_logits: torch.Tensor, size: tuple[int, int]) -> torch.Tensor:
+        return resize_masks(
+            mask_logits,
+            size=size,
+            mode='bilinear',
+            origin=self.mask_resize_origin,
+        )
 
     # def forward(self, outputs, orig_target_sizes):
     def forward(self, outputs, orig_target_sizes: torch.Tensor=None):
@@ -121,12 +133,7 @@ class PostProcessor(nn.Module):
                 mask_logits = pred_masks[batch_idx, query_index[batch_idx]].unsqueeze(1)
                 if orig_target_sizes is not None:
                     orig_w, orig_h = orig_target_sizes[batch_idx].tolist()
-                    mask_logits = F.interpolate(
-                        mask_logits,
-                        size=(int(orig_h), int(orig_w)),
-                        mode='bilinear',
-                        align_corners=False,
-                    )
+                    mask_logits = self.resize_masks(mask_logits, size=(int(orig_h), int(orig_w)))
                 result['masks'] = mask_logits.sigmoid()
             results.append(result)
 

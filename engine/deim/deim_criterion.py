@@ -17,6 +17,7 @@ import copy
 from .dfine_utils import bbox2distance
 from .box_ops import box_cxcywh_to_xyxy, box_iou, generalized_box_iou
 from ..misc.dist_utils import get_world_size, is_dist_available_and_initialized
+from ..misc.mask_resize import resize_masks
 from ..core import register
 
 
@@ -24,7 +25,7 @@ from ..core import register
 class DEIMCriterion(nn.Module):
     """ This class computes the loss for DEIM.
     """
-    __share__ = ['num_classes', 'mask_category_ids']
+    __share__ = ['num_classes', 'mask_category_ids', 'mask_resize_origin']
     __inject__ = ['matcher', ]
 
     def __init__(self, \
@@ -36,6 +37,7 @@ class DEIMCriterion(nn.Module):
         num_classes=80,
         reg_max=32,
         mask_category_ids=None,
+        mask_resize_origin='center',
         boxes_weight_format=None,
         share_matched_indices=False,
         mal_alpha=None,
@@ -69,6 +71,7 @@ class DEIMCriterion(nn.Module):
         self.own_targets, self.own_targets_dn = None, None
         self.reg_max = reg_max
         self.mask_category_ids = [] if mask_category_ids is None else list(mask_category_ids)
+        self.mask_resize_origin = mask_resize_origin
         self.num_pos, self.num_neg = None, None
         self.mal_alpha = mal_alpha
         self.use_uni_set = use_uni_set
@@ -90,6 +93,7 @@ class DEIMCriterion(nn.Module):
             'gamma': self.gamma,
             'reg_max': self.reg_max,
             'mask_category_ids': copy.deepcopy(self.mask_category_ids),
+            'mask_resize_origin': self.mask_resize_origin,
             'mal_alpha': self.mal_alpha,
             'use_uni_set': self.use_uni_set,
             'use_boundary_aware_loss': self.use_boundary_aware_loss,
@@ -112,6 +116,7 @@ class DEIMCriterion(nn.Module):
         self.gamma = state.get('gamma', self.gamma)
         self.reg_max = state.get('reg_max', self.reg_max)
         self.mask_category_ids = copy.deepcopy(state.get('mask_category_ids', self.mask_category_ids))
+        self.mask_resize_origin = state.get('mask_resize_origin', self.mask_resize_origin)
         self.mal_alpha = state.get('mal_alpha', self.mal_alpha)
         self.use_uni_set = state.get('use_uni_set', self.use_uni_set)
         self.use_boundary_aware_loss = state.get('use_boundary_aware_loss', self.use_boundary_aware_loss)
@@ -311,10 +316,11 @@ class DEIMCriterion(nn.Module):
 
         src_masks = torch.cat(src_masks_list, dim=0)
         target_masks = torch.cat(target_masks, dim=0)
-        target_masks = F.interpolate(
+        target_masks = resize_masks(
             target_masks[:, None].float(),
             size=src_masks.shape[-2:],
             mode='nearest',
+            origin=self.mask_resize_origin,
         )[:, 0].to(device=src_masks.device, dtype=src_masks.dtype)
 
         num_masks = torch.as_tensor([sum(int(v.item()) for v in valid_masks)], dtype=torch.float, device=src_masks.device)
@@ -392,7 +398,12 @@ class DEIMCriterion(nn.Module):
     ) -> torch.Tensor:
         masks = target_masks[:, None].float()
         if target_size is not None and tuple(masks.shape[-2:]) != tuple(target_size):
-            masks = F.interpolate(masks, size=target_size, mode='nearest')
+            masks = resize_masks(
+                masks,
+                size=target_size,
+                mode='nearest',
+                origin=self.mask_resize_origin,
+            )
 
         _, _, height, width = masks.shape
         dy = torch.abs(masks[:, :, 1:, :] - masks[:, :, :-1, :])
@@ -421,7 +432,12 @@ class DEIMCriterion(nn.Module):
     ) -> torch.Tensor:
         masks = target_masks[:, None].float()
         if target_size is not None and tuple(masks.shape[-2:]) != tuple(target_size):
-            masks = F.interpolate(masks, size=target_size, mode='nearest')
+            masks = resize_masks(
+                masks,
+                size=target_size,
+                mode='nearest',
+                origin=self.mask_resize_origin,
+            )
 
         distances = masks.clone()
         for _ in range(max(0, int(steps))):
