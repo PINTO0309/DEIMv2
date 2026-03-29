@@ -5,6 +5,9 @@ from typing import Sequence
 import torch
 import torch.nn.functional as F
 
+_CENTER_GRID_CACHE: dict[tuple[int, int, int, int, tuple[str, int], torch.dtype], torch.Tensor] = {}
+_CENTER_INDEX_CACHE: dict[tuple[int, int, int, int, tuple[str, int]], tuple[torch.Tensor, torch.Tensor]] = {}
+
 
 def compute_resized_mask_output_size(
     spatial_size: Sequence[int],
@@ -43,7 +46,11 @@ def compute_resized_mask_output_size(
     return int(size[0]), int(size[1])
 
 
-def _build_center_resize_grid(
+def _cache_device_key(device: torch.device) -> tuple[str, int]:
+    return device.type, -1 if device.index is None else device.index
+
+
+def _compute_center_source_coords(
     in_height: int,
     in_width: int,
     out_height: int,
@@ -51,7 +58,7 @@ def _build_center_resize_grid(
     *,
     device: torch.device,
     dtype: torch.dtype,
-) -> torch.Tensor:
+) -> tuple[torch.Tensor, torch.Tensor]:
     y_coords = (
         (torch.arange(out_height, device=device, dtype=dtype) + 0.5) - (out_height / 2.0)
     ) * (in_height / out_height) + (in_height / 2.0)
@@ -61,6 +68,26 @@ def _build_center_resize_grid(
 
     y_coords = y_coords.clamp(0.0, float(max(in_height - 1, 0)))
     x_coords = x_coords.clamp(0.0, float(max(in_width - 1, 0)))
+    return y_coords, x_coords
+
+
+def _build_center_resize_grid(
+    in_height: int,
+    in_width: int,
+    out_height: int,
+    out_width: int,
+    *,
+    device: torch.device,
+    dtype: torch.dtype,
+) -> torch.Tensor:
+    y_coords, x_coords = _compute_center_source_coords(
+        in_height,
+        in_width,
+        out_height,
+        out_width,
+        device=device,
+        dtype=dtype,
+    )
 
     if in_height > 1:
         y_norm = (y_coords / (in_height - 1)) * 2.0 - 1.0
@@ -74,6 +101,54 @@ def _build_center_resize_grid(
     grid_y = y_norm[:, None].expand(out_height, out_width)
     grid_x = x_norm[None, :].expand(out_height, out_width)
     return torch.stack((grid_x, grid_y), dim=-1)
+
+
+def _get_center_resize_grid(
+    in_height: int,
+    in_width: int,
+    out_height: int,
+    out_width: int,
+    *,
+    device: torch.device,
+    dtype: torch.dtype,
+) -> torch.Tensor:
+    key = (in_height, in_width, out_height, out_width, _cache_device_key(device), dtype)
+    grid = _CENTER_GRID_CACHE.get(key)
+    if grid is None:
+        grid = _build_center_resize_grid(
+            in_height,
+            in_width,
+            out_height,
+            out_width,
+            device=device,
+            dtype=dtype,
+        )
+        _CENTER_GRID_CACHE[key] = grid
+    return grid
+
+
+def _get_center_resize_indices(
+    in_height: int,
+    in_width: int,
+    out_height: int,
+    out_width: int,
+    *,
+    device: torch.device,
+) -> tuple[torch.Tensor, torch.Tensor]:
+    key = (in_height, in_width, out_height, out_width, _cache_device_key(device))
+    indices = _CENTER_INDEX_CACHE.get(key)
+    if indices is None:
+        y_coords, x_coords = _compute_center_source_coords(
+            in_height,
+            in_width,
+            out_height,
+            out_width,
+            device=device,
+            dtype=torch.float32,
+        )
+        indices = (y_coords.round().to(torch.int64), x_coords.round().to(torch.int64))
+        _CENTER_INDEX_CACHE[key] = indices
+    return indices
 
 
 def resize_masks(
@@ -92,6 +167,16 @@ def resize_masks(
     if (in_height, in_width) == (out_height, out_width):
         return masks
 
+    if origin == 'center' and mode in ('nearest', 'nearest-exact'):
+        y_index, x_index = _get_center_resize_indices(
+            in_height,
+            in_width,
+            out_height,
+            out_width,
+            device=masks.device,
+        )
+        return masks.index_select(-2, y_index).index_select(-1, x_index)
+
     original_dtype = masks.dtype
     needs_float = (not torch.is_floating_point(masks)) or mode == 'bilinear' or (
         masks.device.type == 'cpu' and masks.dtype in (torch.float16, torch.bfloat16)
@@ -107,8 +192,7 @@ def resize_masks(
             align_corners=align_corners,
         )
     elif origin == 'center':
-        sample_mode = 'bilinear' if mode == 'bilinear' else 'nearest'
-        grid = _build_center_resize_grid(
+        grid = _get_center_resize_grid(
             in_height,
             in_width,
             out_height,
@@ -120,7 +204,7 @@ def resize_masks(
         resized = F.grid_sample(
             work_masks,
             grid,
-            mode=sample_mode,
+            mode='bilinear',
             padding_mode='zeros',
             align_corners=True,
         )

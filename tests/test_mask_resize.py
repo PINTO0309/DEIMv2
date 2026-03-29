@@ -1,4 +1,5 @@
 import torch
+import torch.nn.functional as F
 
 from engine.data._misc import Mask
 from engine.data.transforms._transforms import Resize
@@ -56,3 +57,32 @@ def test_resize_transform_uses_center_origin_for_masks():
 
     assert resized.shape == expected.shape
     assert torch.equal(torch.as_tensor(resized), expected)
+
+
+def test_resize_masks_center_nearest_matches_previous_grid_sample_behavior():
+    masks = torch.arange(25, dtype=torch.float32).reshape(1, 1, 5, 5)
+
+    y_coords = ((torch.arange(7, dtype=torch.float32) + 0.5) - 3.5) * (5 / 7) + 2.5
+    x_coords = ((torch.arange(7, dtype=torch.float32) + 0.5) - 3.5) * (5 / 7) + 2.5
+    y_coords = y_coords.clamp(0.0, 4.0)
+    x_coords = x_coords.clamp(0.0, 4.0)
+    y_norm = (y_coords / 4.0) * 2.0 - 1.0
+    x_norm = (x_coords / 4.0) * 2.0 - 1.0
+    grid = torch.stack(
+        (
+            x_norm[None, :].expand(7, 7),
+            y_norm[:, None].expand(7, 7),
+        ),
+        dim=-1,
+    ).unsqueeze(0)
+    expected = F.grid_sample(
+        masks,
+        grid,
+        mode='nearest',
+        padding_mode='zeros',
+        align_corners=True,
+    )
+
+    actual = resize_masks(masks, size=(7, 7), mode='nearest', origin='center')
+
+    assert torch.equal(actual, expected)
