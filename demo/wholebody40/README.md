@@ -121,3 +121,7 @@ uv run python demo/wholebody40/demo_deimv2_torch_wholebody40_ins.py \
 - Body mask resize uses `center` origin by default. You can compare against the legacy behavior with `--mask_resize_origin topleft`.
 - If you specify `--disable_render_classids 0`, both the body bounding box and the body mask are hidden.
 - If you add `--save_raw_predictions`, the script saves `labels/scores/boxes` and body `mask_area/mask_bbox` to `predictions/*.json`.
+
+|Image|Image|
+|:-:|:-:|
+|![000000016905](https://github.com/user-attachments/assets/e43f7f95-e8e4-4a2e-9630-502f16fcac85)|![000000049135](https://github.com/user-attachments/assets/54c0daaa-64ec-4fe8-9d37-9fea60ad8ea3)|
