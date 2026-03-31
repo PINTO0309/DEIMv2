@@ -19,6 +19,7 @@ import torch
 import torch.nn as nn
 import torchvision.transforms as T
 from PIL import Image, ImageColor
+from tqdm import tqdm
 
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '../..')))
 from engine.core import YAMLConfig
@@ -912,7 +913,12 @@ def process_images(args) -> None:
     print(f'Output directory: {output_dir}')
     print(f'Mask resize origin: {args.mask_resize_origin}')
 
-    for idx, image_path in enumerate(image_paths, start=1):
+    for image_path in tqdm(
+        image_paths,
+        desc='Processing images',
+        dynamic_ncols=True,
+        unit='image',
+    ):
         image = Image.open(image_path).convert('RGB')
         orig_w, orig_h = image.size
         orig_target_sizes = torch.tensor([[orig_w, orig_h]], dtype=torch.float32)
@@ -966,9 +972,6 @@ def process_images(args) -> None:
                 mask_threshold=args.mask_threshold,
             )
             save_predictions_json(output_dir, image_path, records)
-
-        if idx % 50 == 0 or idx == len(image_paths):
-            print(f'Processed {idx}/{len(image_paths)}')
 
 
 def parse_args():
