@@ -78,10 +78,38 @@ class PostProcessor(nn.Module):
             origin=self.mask_resize_origin,
         )
 
+    def _gather_mask_like(
+        self,
+        predictions: torch.Tensor | None,
+        query_index: torch.Tensor,
+        orig_target_sizes: torch.Tensor | None,
+    ) -> torch.Tensor | list[torch.Tensor] | None:
+        if predictions is None:
+            return None
+
+        gathered = []
+        for batch_idx in range(predictions.shape[0]):
+            logits = predictions[batch_idx, query_index[batch_idx]].unsqueeze(1)
+            if orig_target_sizes is not None:
+                orig_w, orig_h = orig_target_sizes[batch_idx].tolist()
+                logits = self.resize_masks(logits, size=(int(orig_h), int(orig_w)))
+            gathered.append(logits.sigmoid())
+
+        if orig_target_sizes is not None:
+            return gathered
+        return torch.stack(gathered, dim=0)
+
     # def forward(self, outputs, orig_target_sizes):
-    def forward(self, outputs, orig_target_sizes: torch.Tensor=None):
+    def forward(
+        self,
+        outputs,
+        orig_target_sizes: torch.Tensor=None,
+        return_masks: bool=True,
+        return_contours: bool=False,
+    ):
         logits, boxes = outputs['pred_logits'], outputs['pred_boxes']
-        pred_masks = outputs.get('pred_masks')
+        pred_masks = outputs.get('pred_masks') if return_masks else None
+        pred_contours = outputs.get('pred_mask_contours') if return_contours else None
         bbox_pred = self.box_cxcywh_to_xyxy(boxes)
         if orig_target_sizes is not None:
             bbox_pred *= orig_target_sizes.repeat(1, 2).unsqueeze(1)
@@ -106,15 +134,32 @@ class PostProcessor(nn.Module):
                 query_index = torch.arange(scores.shape[1], device=logits.device).unsqueeze(0).expand(scores.shape[0], -1)
                 boxes = bbox_pred
 
+        gathered_masks = self._gather_mask_like(pred_masks, query_index, orig_target_sizes)
+        gathered_contours = self._gather_mask_like(pred_contours, query_index, orig_target_sizes)
+
         if self.deploy_mode:
+            if orig_target_sizes is not None and (gathered_masks is not None or gathered_contours is not None):
+                raise RuntimeError('Deploy mode does not support resized mask/contour outputs. Export without orig_target_sizes instead.')
+
+            deploy_labels = labels
+            deploy_scores = scores
+            if deploy_labels.dim() == 2:
+                deploy_labels = deploy_labels.unsqueeze(-1)
+            if deploy_scores.dim() == 2:
+                deploy_scores = deploy_scores.unsqueeze(-1)
+            label_xyxy_score = torch.cat([deploy_labels, boxes, deploy_scores], dim=2)
+
+            if gathered_masks is not None or gathered_contours is not None:
+                deploy_outputs = [label_xyxy_score]
+                if gathered_masks is not None:
+                    deploy_outputs.append(gathered_masks)
+                if gathered_contours is not None:
+                    deploy_outputs.append(gathered_contours)
+                return tuple(deploy_outputs)
+
             if orig_target_sizes is not None:
                 return labels, boxes, scores
-            else:
-                if labels.dim() == 2:
-                    labels = labels.unsqueeze(-1)
-                if scores.dim() == 2:
-                    scores = scores.unsqueeze(-1)
-                return torch.cat([labels, boxes, scores], dim=2)
+            return label_xyxy_score
 
         if self.remap_mscoco_category:
             from ..data.dataset import mscoco_label2category
@@ -129,12 +174,10 @@ class PostProcessor(nn.Module):
         results = []
         for batch_idx, (lab, box, sco) in enumerate(zip(labels, boxes, scores)):
             result = dict(labels=lab, boxes=box, scores=sco)
-            if pred_masks is not None:
-                mask_logits = pred_masks[batch_idx, query_index[batch_idx]].unsqueeze(1)
-                if orig_target_sizes is not None:
-                    orig_w, orig_h = orig_target_sizes[batch_idx].tolist()
-                    mask_logits = self.resize_masks(mask_logits, size=(int(orig_h), int(orig_w)))
-                result['masks'] = mask_logits.sigmoid()
+            if gathered_masks is not None:
+                result['masks'] = gathered_masks[batch_idx]
+            if gathered_contours is not None:
+                result['contours'] = gathered_contours[batch_idx]
             results.append(result)
 
         return results

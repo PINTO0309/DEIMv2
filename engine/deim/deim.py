@@ -23,10 +23,15 @@ class DEIM(nn.Module):
         self.decoder = decoder
         self.encoder = encoder
 
-    def forward(self, x, targets=None):
+    def forward(self, x, targets=None, return_masks=True, return_contours=False):
         x = self.backbone(x)
         x = self.encoder(x)
-        x = self.decoder(x, targets)
+        x = self.decoder(
+            x,
+            targets,
+            return_masks=return_masks,
+            return_contours=return_contours,
+        )
 
         return x
 

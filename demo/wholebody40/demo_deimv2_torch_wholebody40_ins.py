@@ -380,10 +380,15 @@ def prepare_prediction_payload(
     boxes: List[Box],
     result: Dict[str, torch.Tensor],
     mask_threshold: float,
+    enable_masks: bool,
+    enable_contours: bool,
 ) -> List[Dict[str, object]]:
-    masks = result.get('masks')
+    masks = result.get('masks') if enable_masks else None
     if masks is not None:
         masks = masks.detach().cpu()
+    contours = result.get('contours') if enable_contours else None
+    if contours is not None:
+        contours = contours.detach().cpu()
 
     records: List[Dict[str, object]] = []
     for box in boxes:
@@ -403,6 +408,13 @@ def prepare_prediction_payload(
             if mask_bbox is not None:
                 record['mask_area'] = int(binary_mask.sum())
                 record['mask_bbox'] = mask_bbox
+
+        if contours is not None and box.classid == BODY_CLASS_ID and box.source_idx >= 0:
+            binary_contour = contours[box.source_idx, 0].numpy() >= mask_threshold
+            contour_bbox = binary_mask_bbox(binary_contour)
+            if contour_bbox is not None:
+                record['contour_area'] = int(binary_contour.sum())
+                record['contour_bbox'] = contour_bbox
 
         records.append(record)
     return records
@@ -440,6 +452,45 @@ def overlay_body_masks(
     base = image.convert('RGBA')
     mask_image = Image.fromarray(overlay)
     return Image.alpha_composite(base, mask_image).convert('RGB')
+
+
+def overlay_body_contours(
+    image: Image.Image,
+    result: Dict[str, torch.Tensor],
+    boxes: List[Box],
+    contour_threshold: float,
+    disable_render_classids: set[int],
+) -> Image.Image:
+    contours = result.get('contours')
+    if contours is None or BODY_CLASS_ID in disable_render_classids:
+        return image
+
+    contours = contours.detach().cpu()
+    rendered = cv2.cvtColor(np.array(image), cv2.COLOR_RGB2BGR)
+    body_instance_idx = 0
+
+    for box in boxes:
+        if box.classid != BODY_CLASS_ID or box.source_idx < 0:
+            continue
+        binary_contour = (contours[box.source_idx, 0].numpy() >= contour_threshold).astype(np.uint8)
+        if not binary_contour.any():
+            continue
+
+        contour_segments, _ = cv2.findContours(binary_contour, cv2.RETR_LIST, cv2.CHAIN_APPROX_NONE)
+        if not contour_segments:
+            continue
+
+        instance_color = make_instance_color(body_instance_idx)
+        cv2.drawContours(
+            rendered,
+            contour_segments,
+            contourIdx=-1,
+            color=(instance_color[2], instance_color[1], instance_color[0]),
+            thickness=1,
+        )
+        body_instance_idx += 1
+
+    return Image.fromarray(cv2.cvtColor(rendered, cv2.COLOR_BGR2RGB))
 
 
 def draw_dashed_line(
@@ -852,11 +903,26 @@ class InferenceModel(nn.Module):
         self.device = device
 
     @torch.inference_mode()
-    def forward(self, image_tensor: torch.Tensor, orig_target_sizes: torch.Tensor):
-        outputs = self.model(image_tensor)
+    def forward(
+        self,
+        image_tensor: torch.Tensor,
+        orig_target_sizes: torch.Tensor,
+        return_masks: bool=False,
+        return_contours: bool=False,
+    ):
+        outputs = self.model(
+            image_tensor,
+            return_masks=return_masks,
+            return_contours=return_contours,
+        )
         outputs = move_to_device(outputs, torch.device('cpu'))
         orig_target_sizes = orig_target_sizes.to('cpu')
-        return self.postprocessor(outputs, orig_target_sizes)
+        return self.postprocessor(
+            outputs,
+            orig_target_sizes,
+            return_masks=return_masks,
+            return_contours=return_contours,
+        )
 
 
 def save_predictions_json(output_dir: Path, image_path: Path, records: List[Dict[str, object]]) -> None:
@@ -912,6 +978,8 @@ def process_images(args) -> None:
     print(f'Using checkpoint: {resume_path}')
     print(f'Output directory: {output_dir}')
     print(f'Mask resize origin: {args.mask_resize_origin}')
+    print(f'Enable masks: {args.enable_masks}')
+    print(f'Enable contours: {args.enable_contours}')
 
     for image_path in tqdm(
         image_paths,
@@ -924,7 +992,12 @@ def process_images(args) -> None:
         orig_target_sizes = torch.tensor([[orig_w, orig_h]], dtype=torch.float32)
         image_tensor = transform(image).unsqueeze(0).to(device)
 
-        results = model(image_tensor, orig_target_sizes)
+        results = model(
+            image_tensor,
+            orig_target_sizes,
+            return_masks=args.enable_masks,
+            return_contours=args.enable_contours,
+        )
         result = results[0]
 
         boxes = build_result_boxes(
@@ -946,6 +1019,13 @@ def process_images(args) -> None:
             boxes=boxes,
             mask_threshold=args.mask_threshold,
             mask_alpha=args.mask_alpha,
+            disable_render_classids=disable_render_classids,
+        )
+        rendered = overlay_body_contours(
+            image=rendered,
+            result=result,
+            boxes=boxes,
+            contour_threshold=args.mask_threshold,
             disable_render_classids=disable_render_classids,
         )
         rendered = draw_detections(
@@ -970,6 +1050,8 @@ def process_images(args) -> None:
                 boxes=boxes,
                 result=result,
                 mask_threshold=args.mask_threshold,
+                enable_masks=args.enable_masks,
+                enable_contours=args.enable_contours,
             )
             save_predictions_json(output_dir, image_path, records)
 
@@ -1000,6 +1082,8 @@ def parse_args():
     parser.add_argument('--mask_threshold', type=float, default=0.5)
     parser.add_argument('--mask_alpha', type=check_alpha, default=128)
     parser.add_argument('--mask_resize_origin', type=str, choices=['topleft', 'center'], default='topleft')
+    parser.add_argument('--enable-masks', action='store_true')
+    parser.add_argument('--enable-contours', action='store_true')
     parser.add_argument('--keypoint_drawing_mode', type=str, choices=['dot', 'box', 'both'], default='dot')
     parser.add_argument('--enable_bone_drawing_mode', action='store_true')
     parser.add_argument('--disable_generation_identification_mode', action='store_true')

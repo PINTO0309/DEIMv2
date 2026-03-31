@@ -55,6 +55,18 @@ def draw(images, labels, boxes, scores, ratios, paddings, thrh=0.4):
     return result_images
 
 
+def decode_outputs(output_names, output_values):
+    outputs = dict(zip(output_names, output_values))
+    if 'label_xyxy_score' in outputs:
+        label_xyxy_score = outputs['label_xyxy_score']
+        labels = label_xyxy_score[..., 0].astype(np.int64)
+        boxes = label_xyxy_score[..., 1:5]
+        scores = label_xyxy_score[..., 5]
+    else:
+        labels, boxes, scores = output_values[:3]
+    return labels, boxes, scores, outputs
+
+
 def process_image(sess, im_pil, size=640, model_size='s'):
     # Resize image while preserving aspect ratio
     resized_im_pil, ratio, pad_w, pad_h = resize_with_aspect_ratio(im_pil, size)
@@ -68,12 +80,12 @@ def process_image(sess, im_pil, size=640, model_size='s'):
         ])
     im_data = transforms(resized_im_pil).unsqueeze(0)
 
-    output = sess.run(
-        output_names=None,
-        input_feed={'images': im_data.numpy(), "orig_target_sizes": orig_size.numpy()}
-    )
-
-    labels, boxes, scores = output
+    input_feed = {'images': im_data.numpy()}
+    if any(inp.name == 'orig_target_sizes' for inp in sess.get_inputs()):
+        input_feed['orig_target_sizes'] = orig_size.numpy()
+    output_names = [out.name for out in sess.get_outputs()]
+    output = sess.run(output_names=output_names, input_feed=input_feed)
+    labels, boxes, scores, _ = decode_outputs(output_names, output)
 
     result_images = draw(
         [im_pil], labels, boxes, scores,
@@ -117,12 +129,12 @@ def process_video(sess, video_path, size=640, model_size='s'):
             ])
         im_data = transforms(resized_frame_pil).unsqueeze(0)
 
-        output = sess.run(
-            output_names=None,
-            input_feed={'images': im_data.numpy(), "orig_target_sizes": orig_size.numpy()}
-        )
-
-        labels, boxes, scores = output
+        input_feed = {'images': im_data.numpy()}
+        if any(inp.name == 'orig_target_sizes' for inp in sess.get_inputs()):
+            input_feed['orig_target_sizes'] = orig_size.numpy()
+        output_names = [out.name for out in sess.get_outputs()]
+        output = sess.run(output_names=output_names, input_feed=input_feed)
+        labels, boxes, scores, _ = decode_outputs(output_names, output)
 
         # Draw detections on the original frame
         result_images = draw(

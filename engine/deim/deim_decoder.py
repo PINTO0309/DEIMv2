@@ -501,9 +501,6 @@ class DEIMTransformer(nn.Module):
     def _maybe_get_aux_mask_features(self, feats: List[torch.Tensor]) -> tuple[Optional[torch.Tensor], Optional[torch.Tensor]]:
         contour_features = None
         distance_features = None
-        if not self.training:
-            return contour_features, distance_features
-
         if self.use_contour_aux_head or self.use_distance_aux_head:
             self._validate_feature_level(self.aux_mask_feature_level, feats, 'aux_mask_feature_level')
 
@@ -662,12 +659,20 @@ class DEIMTransformer(nn.Module):
 
         return topk_memory, topk_logits, topk_anchors
 
-    def forward(self, feats, targets=None):
+    def forward(self, feats, targets=None, return_masks=True, return_contours=False):
         # input projection and embedding
-        self._validate_feature_level(self.mask_feature_level, feats, 'mask_feature_level')
         memory, spatial_shapes = self._get_encoder_input(feats)
-        mask_features = self.mask_feature_head(feats[self.mask_feature_level])
-        contour_features, distance_features = self._maybe_get_aux_mask_features(feats)
+        need_mask_features = self.training or return_masks
+        need_contour_features = self.training or return_contours
+
+        mask_features = None
+        if need_mask_features:
+            self._validate_feature_level(self.mask_feature_level, feats, 'mask_feature_level')
+            mask_features = self.mask_feature_head(feats[self.mask_feature_level])
+
+        contour_features, distance_features = None, None
+        if self.training or need_contour_features:
+            contour_features, distance_features = self._maybe_get_aux_mask_features(feats)
 
         # prepare denoising training
         if self.training and self.num_denoising > 0:
@@ -731,8 +736,19 @@ class DEIMTransformer(nn.Module):
                     self.distance_embed_head,
                 )
         else:
-            out = {'pred_logits': out_logits[-1], 'pred_boxes': out_bboxes[-1],
-                   'pred_masks': self._get_mask_logits(out_queries, mask_features)}
+            out = {'pred_logits': out_logits[-1], 'pred_boxes': out_bboxes[-1]}
+            if return_masks:
+                out['pred_masks'] = self._get_mask_logits(out_queries, mask_features)
+            if return_contours:
+                if not self.use_contour_aux_head:
+                    raise RuntimeError('Contour output requested, but the decoder was not built with contour head support.')
+                if contour_features is None:
+                    raise RuntimeError('Contour output requested, but contour features are unavailable.')
+                out['pred_mask_contours'] = self._get_aux_mask_logits(
+                    out_queries,
+                    contour_features,
+                    self.contour_embed_head,
+                )
 
         if self.training and self.aux_loss:
             out['aux_outputs'] = self._set_aux_loss2(out_logits[:-1], out_bboxes[:-1], out_corners[:-1], out_refs[:-1],
