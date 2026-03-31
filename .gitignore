@@ -160,3 +160,4 @@ tmp/
 human-instance-segmentation/
 deimv2_dinov3_x_wholebody40*/
 deimv2_*.tar.gz
+note.md
