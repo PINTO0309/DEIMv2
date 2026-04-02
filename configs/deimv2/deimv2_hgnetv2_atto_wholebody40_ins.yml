@@ -41,6 +41,8 @@ DEIMTransformer:
   share_bbox_head: True
   use_gateway: False
   mask_feature_level: 0 # 0=stride16, 1=stride32
+  mask_embed_head_hidden_dim: 32
+  mask_embed_head_num_layers: 2
   use_contour_aux_head: False
   use_distance_aux_head: False
   aux_mask_feature_level: 0 # 0=stride16, 1=stride32

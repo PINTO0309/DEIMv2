@@ -37,6 +37,8 @@ DEIMTransformer:
   dim_feedforward: 2048
   mask_feature_level: 0 # 0=stride8, 1=stride16, 2=stride32
   mask_compute_mode: lazy
+  mask_embed_head_hidden_dim: 128
+  mask_embed_head_num_layers: 2
   use_contour_aux_head: True
   use_distance_aux_head: True
   aux_mask_feature_level: 0 # 0=stride8, 1=stride16, 2=stride32

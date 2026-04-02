@@ -33,6 +33,8 @@ DEIMTransformer:
   eval_idx: -1
   num_queries: 800
   mask_feature_level: 1 # 0=stride8, 1=stride16, 2=stride32
+  mask_embed_head_hidden_dim: 96
+  mask_embed_head_num_layers: 2
   use_contour_aux_head: False
   use_distance_aux_head: False
   aux_mask_feature_level: 1
