@@ -8,6 +8,7 @@ __include__: [
 
 
 output_dir: ./outputs/deimv2_dinov3_x_wholebody40_ins
+mask_target_class_ids: [0]
 
 DEIM:
   backbone: DINOv3STAs
@@ -35,6 +36,7 @@ DEIMTransformer:
   hidden_dim: 256
   dim_feedforward: 2048
   mask_feature_level: 0 # 0=stride8, 1=stride16, 2=stride32
+  mask_compute_mode: lazy
   use_contour_aux_head: True
   use_distance_aux_head: True
   aux_mask_feature_level: 0 # 0=stride8, 1=stride16, 2=stride32

@@ -246,7 +246,7 @@ class TransformerDecoder(nn.Module):
 
 @register()
 class DEIMTransformer(nn.Module):
-    __share__ = ['num_classes', 'eval_spatial_size']
+    __share__ = ['num_classes', 'eval_spatial_size', 'mask_compute_mode']
 
     @staticmethod
     def _last_decoder_output(tensor: torch.Tensor) -> torch.Tensor:
@@ -286,6 +286,7 @@ class DEIMTransformer(nn.Module):
                  use_gateway=True,
                  share_bbox_head=False,
                  share_score_head=False,
+                 mask_compute_mode='full',
                  ):
         super().__init__()
         assert len(feat_channels) <= num_levels
@@ -310,6 +311,9 @@ class DEIMTransformer(nn.Module):
         self.use_contour_aux_head = use_contour_aux_head
         self.use_distance_aux_head = use_distance_aux_head
         self.aux_mask_feature_level = mask_feature_level if aux_mask_feature_level is None else aux_mask_feature_level
+        if mask_compute_mode not in ('full', 'lazy'):
+            raise ValueError(f'Unsupported mask_compute_mode={mask_compute_mode}')
+        self.mask_compute_mode = mask_compute_mode
 
         assert query_select_method in ('default', 'one2many', 'agnostic'), ''
         assert cross_attn_method in ('default', 'discrete'), ''
@@ -420,6 +424,7 @@ class DEIMTransformer(nn.Module):
             'aux_loss': self.aux_loss,
             'reg_max': self.reg_max,
             'mask_feature_level': self.mask_feature_level,
+            'mask_compute_mode': self.mask_compute_mode,
             'use_contour_aux_head': self.use_contour_aux_head,
             'use_distance_aux_head': self.use_distance_aux_head,
             'aux_mask_feature_level': self.aux_mask_feature_level,
@@ -447,6 +452,7 @@ class DEIMTransformer(nn.Module):
         self.aux_loss = state.get('aux_loss', self.aux_loss)
         self.reg_max = state.get('reg_max', self.reg_max)
         self.mask_feature_level = state.get('mask_feature_level', self.mask_feature_level)
+        self.mask_compute_mode = state.get('mask_compute_mode', self.mask_compute_mode)
         self.use_contour_aux_head = state.get('use_contour_aux_head', self.use_contour_aux_head)
         self.use_distance_aux_head = state.get('use_distance_aux_head', self.use_distance_aux_head)
         self.aux_mask_feature_level = state.get('aux_mask_feature_level', self.aux_mask_feature_level)
@@ -494,7 +500,13 @@ class DEIMTransformer(nn.Module):
                 init.xavier_uniform_(m[0].weight)
 
     def _get_mask_logits(self, query_features: torch.Tensor, mask_features: torch.Tensor) -> torch.Tensor:
-        mask_embed = self.mask_embed_head(query_features)
+        mask_embed = self._get_mask_embed(query_features)
+        return self._mask_logits_from_embeddings(mask_embed, mask_features)
+
+    def _get_mask_embed(self, query_features: torch.Tensor) -> torch.Tensor:
+        return self.mask_embed_head(query_features)
+
+    def _mask_logits_from_embeddings(self, mask_embed: torch.Tensor, mask_features: torch.Tensor) -> torch.Tensor:
         return torch.einsum('bqc,bchw->bqhw', mask_embed, mask_features)
 
     def _get_aux_mask_logits(
@@ -504,7 +516,28 @@ class DEIMTransformer(nn.Module):
         embed_head: MLP,
     ) -> torch.Tensor:
         mask_embed = embed_head(query_features)
-        return torch.einsum('bqc,bchw->bqhw', mask_embed, mask_features)
+        return self._mask_logits_from_embeddings(mask_embed, mask_features)
+
+    def _build_lazy_mask_outputs(
+        self,
+        out_queries: torch.Tensor,
+        mask_features: Optional[torch.Tensor],
+        contour_features: Optional[torch.Tensor],
+        distance_features: Optional[torch.Tensor],
+        return_masks: bool,
+        return_contours: bool,
+    ) -> dict[str, torch.Tensor]:
+        lazy_outputs: dict[str, torch.Tensor] = {}
+        if mask_features is not None:
+            lazy_outputs['mask_embed'] = self._get_mask_embed(out_queries)
+            lazy_outputs['mask_features'] = mask_features
+        if contour_features is not None and (self.training or return_contours):
+            lazy_outputs['pred_mask_contour_embeds'] = self.contour_embed_head(out_queries)
+            lazy_outputs['pred_mask_contour_features'] = contour_features
+        if distance_features is not None and self.training:
+            lazy_outputs['pred_mask_distance_embeds'] = self.distance_embed_head(out_queries)
+            lazy_outputs['pred_mask_distance_features'] = distance_features
+        return lazy_outputs
 
     def _validate_feature_level(self, feature_level: int, feats: List[torch.Tensor], feature_name: str) -> None:
         if 0 <= feature_level < len(feats):
@@ -737,40 +770,68 @@ class DEIMTransformer(nn.Module):
             _, out_queries = torch.split(out_queries, dn_meta['dn_num_split'], dim=1)
 
         if self.training:
-            out = {'pred_logits': self._last_decoder_output(out_logits),
-                   'pred_boxes': self._last_decoder_output(out_bboxes),
-                   'pred_corners': self._last_decoder_output(out_corners),
-                   'ref_points': self._last_decoder_output(out_refs), 'up': self.up, 'reg_scale': self.reg_scale,
-                   'pred_masks': self._get_mask_logits(out_queries, mask_features)}
-            if self.use_contour_aux_head and contour_features is not None:
-                out['pred_mask_contours'] = self._get_aux_mask_logits(
-                    out_queries,
-                    contour_features,
-                    self.contour_embed_head,
+            out = {
+                'pred_logits': self._last_decoder_output(out_logits),
+                'pred_boxes': self._last_decoder_output(out_bboxes),
+                'pred_corners': self._last_decoder_output(out_corners),
+                'ref_points': self._last_decoder_output(out_refs),
+                'up': self.up,
+                'reg_scale': self.reg_scale,
+            }
+            if self.mask_compute_mode == 'lazy':
+                out.update(
+                    self._build_lazy_mask_outputs(
+                        out_queries,
+                        mask_features,
+                        contour_features,
+                        distance_features,
+                        return_masks=True,
+                        return_contours=True,
+                    )
                 )
-            if self.use_distance_aux_head and distance_features is not None:
-                out['pred_mask_distances'] = self._get_aux_mask_logits(
-                    out_queries,
-                    distance_features,
-                    self.distance_embed_head,
-                )
+            else:
+                out['pred_masks'] = self._get_mask_logits(out_queries, mask_features)
+                if self.use_contour_aux_head and contour_features is not None:
+                    out['pred_mask_contours'] = self._get_aux_mask_logits(
+                        out_queries,
+                        contour_features,
+                        self.contour_embed_head,
+                    )
+                if self.use_distance_aux_head and distance_features is not None:
+                    out['pred_mask_distances'] = self._get_aux_mask_logits(
+                        out_queries,
+                        distance_features,
+                        self.distance_embed_head,
+                    )
         else:
             out = {
                 'pred_logits': self._last_decoder_output(out_logits),
                 'pred_boxes': self._last_decoder_output(out_bboxes),
             }
-            if return_masks:
-                out['pred_masks'] = self._get_mask_logits(out_queries, mask_features)
-            if return_contours:
-                if not self.use_contour_aux_head:
-                    raise RuntimeError('Contour output requested, but the decoder was not built with contour head support.')
-                if contour_features is None:
-                    raise RuntimeError('Contour output requested, but contour features are unavailable.')
-                out['pred_mask_contours'] = self._get_aux_mask_logits(
-                    out_queries,
-                    contour_features,
-                    self.contour_embed_head,
+            if self.mask_compute_mode == 'lazy':
+                out.update(
+                    self._build_lazy_mask_outputs(
+                        out_queries,
+                        mask_features,
+                        contour_features,
+                        distance_features,
+                        return_masks=return_masks,
+                        return_contours=return_contours,
+                    )
                 )
+            else:
+                if return_masks:
+                    out['pred_masks'] = self._get_mask_logits(out_queries, mask_features)
+                if return_contours:
+                    if not self.use_contour_aux_head:
+                        raise RuntimeError('Contour output requested, but the decoder was not built with contour head support.')
+                    if contour_features is None:
+                        raise RuntimeError('Contour output requested, but contour features are unavailable.')
+                    out['pred_mask_contours'] = self._get_aux_mask_logits(
+                        out_queries,
+                        contour_features,
+                        self.contour_embed_head,
+                    )
 
         if self.training and self.aux_loss:
             out['aux_outputs'] = self._set_aux_loss2(out_logits[:-1], out_bboxes[:-1], out_corners[:-1], out_refs[:-1],
