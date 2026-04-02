@@ -87,6 +87,15 @@ class PostProcessor(nn.Module):
         if predictions is None:
             return None
 
+        if orig_target_sizes is None:
+            gather_index = query_index[:, :, None, None].expand(
+                -1,
+                -1,
+                predictions.shape[-2],
+                predictions.shape[-1],
+            )
+            return predictions.gather(dim=1, index=gather_index).sigmoid()
+
         gathered = []
         for batch_idx in range(predictions.shape[0]):
             logits = predictions[batch_idx, query_index[batch_idx]].unsqueeze(1)

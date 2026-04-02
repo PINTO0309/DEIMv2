@@ -11,6 +11,7 @@ Copyright (c) 2023 lyuwenyu. All Rights Reserved.
 
 import os
 import sys
+from contextlib import contextmanager
 
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), '../..'))
 
@@ -18,6 +19,26 @@ import torch
 import torch.nn as nn
 
 from engine.core import YAMLConfig
+
+
+@contextmanager
+def patch_non_tensor_extra_state(module: nn.Module):
+    patched = []
+    for submodule in module.modules():
+        if type(submodule).get_extra_state is nn.Module.get_extra_state:
+            continue
+        extra_state = submodule.get_extra_state()
+        if torch.is_tensor(extra_state):
+            continue
+        original = submodule.get_extra_state
+        submodule.get_extra_state = lambda: torch.empty(0)
+        patched.append((submodule, original))
+
+    try:
+        yield
+    finally:
+        for submodule, original in patched:
+            submodule.get_extra_state = original
 
 
 def main(args, ):
@@ -105,22 +126,7 @@ def main(args, ):
             data = torch.randn(1, 3, h, w)
             _ = model(data)
 
-            torch.onnx.export(
-                model,
-                (data),
-                export_path,
-                input_names=['images'],
-                output_names=output_names,
-                dynamic_axes=None,
-                opset_version=17,
-            )
-        else:
-            model.cuda()
-            with torch.autocast("cuda", dtype=torch.float16):
-                h, w = args.size
-                data = torch.randn(1, 3, h, w, device="cuda")
-                _ = model(data)
-
+            with patch_non_tensor_extra_state(model):
                 torch.onnx.export(
                     model,
                     (data),
@@ -128,23 +134,8 @@ def main(args, ):
                     input_names=['images'],
                     output_names=output_names,
                     dynamic_axes=None,
-                    opset_version=17,
+                    opset_version=args.opset,
                 )
-    else:
-        if not args.fp16:
-            h, w = args.size
-            data = torch.randn(1, 3, h, w)
-            _ = model(data)
-
-            torch.onnx.export(
-                model,
-                (data),
-                export_path,
-                input_names=['images'],
-                output_names=output_names,
-                dynamic_axes=dynamic_axes,
-                opset_version=17,
-            )
         else:
             model.cuda()
             with torch.autocast("cuda", dtype=torch.float16):
@@ -152,6 +143,23 @@ def main(args, ):
                 data = torch.randn(1, 3, h, w, device="cuda")
                 _ = model(data)
 
+                with patch_non_tensor_extra_state(model):
+                    torch.onnx.export(
+                        model,
+                        (data),
+                        export_path,
+                        input_names=['images'],
+                        output_names=output_names,
+                        dynamic_axes=None,
+                        opset_version=args.opset,
+                    )
+    else:
+        if not args.fp16:
+            h, w = args.size
+            data = torch.randn(1, 3, h, w)
+            _ = model(data)
+
+            with patch_non_tensor_extra_state(model):
                 torch.onnx.export(
                     model,
                     (data),
@@ -159,8 +167,25 @@ def main(args, ):
                     input_names=['images'],
                     output_names=output_names,
                     dynamic_axes=dynamic_axes,
-                    opset_version=17,
+                    opset_version=args.opset,
                 )
+        else:
+            model.cuda()
+            with torch.autocast("cuda", dtype=torch.float16):
+                h, w = args.size
+                data = torch.randn(1, 3, h, w, device="cuda")
+                _ = model(data)
+
+                with patch_non_tensor_extra_state(model):
+                    torch.onnx.export(
+                        model,
+                        (data),
+                        export_path,
+                        input_names=['images'],
+                        output_names=output_names,
+                        dynamic_axes=dynamic_axes,
+                        opset_version=args.opset,
+                    )
 
     if args.check:
         import onnx

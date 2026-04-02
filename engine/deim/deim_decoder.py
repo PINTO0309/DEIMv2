@@ -146,6 +146,12 @@ class TransformerDecoder(nn.Module):
         self.layers = self.layers[:self.eval_idx + 1]
         self.lqe_layers = nn.ModuleList([nn.Identity()] * (self.eval_idx) + [self.lqe_layers[self.eval_idx]])
 
+    @staticmethod
+    def _finalize_decoder_outputs(outputs: list[torch.Tensor]) -> torch.Tensor:
+        if torch.onnx.is_in_onnx_export() and len(outputs) == 1:
+            return outputs[0]
+        return torch.stack(outputs)
+
     def forward(self,
                 target,
                 ref_points_unact,
@@ -227,13 +233,24 @@ class TransformerDecoder(nn.Module):
             ref_points_detach = inter_ref_bbox.detach()
             output_detach = output.detach()
 
-        return torch.stack(dec_out_bboxes), torch.stack(dec_out_logits), \
-               torch.stack(dec_out_pred_corners), torch.stack(dec_out_refs), pre_bboxes, pre_scores, output
+        return (
+            self._finalize_decoder_outputs(dec_out_bboxes),
+            self._finalize_decoder_outputs(dec_out_logits),
+            self._finalize_decoder_outputs(dec_out_pred_corners),
+            self._finalize_decoder_outputs(dec_out_refs),
+            pre_bboxes,
+            pre_scores,
+            output,
+        )
 
 
 @register()
 class DEIMTransformer(nn.Module):
     __share__ = ['num_classes', 'eval_spatial_size']
+
+    @staticmethod
+    def _last_decoder_output(tensor: torch.Tensor) -> torch.Tensor:
+        return tensor[-1] if tensor.dim() > 3 else tensor
 
     def __init__(self,
                  num_classes=80,
@@ -720,8 +737,10 @@ class DEIMTransformer(nn.Module):
             _, out_queries = torch.split(out_queries, dn_meta['dn_num_split'], dim=1)
 
         if self.training:
-            out = {'pred_logits': out_logits[-1], 'pred_boxes': out_bboxes[-1], 'pred_corners': out_corners[-1],
-                   'ref_points': out_refs[-1], 'up': self.up, 'reg_scale': self.reg_scale,
+            out = {'pred_logits': self._last_decoder_output(out_logits),
+                   'pred_boxes': self._last_decoder_output(out_bboxes),
+                   'pred_corners': self._last_decoder_output(out_corners),
+                   'ref_points': self._last_decoder_output(out_refs), 'up': self.up, 'reg_scale': self.reg_scale,
                    'pred_masks': self._get_mask_logits(out_queries, mask_features)}
             if self.use_contour_aux_head and contour_features is not None:
                 out['pred_mask_contours'] = self._get_aux_mask_logits(
@@ -736,7 +755,10 @@ class DEIMTransformer(nn.Module):
                     self.distance_embed_head,
                 )
         else:
-            out = {'pred_logits': out_logits[-1], 'pred_boxes': out_bboxes[-1]}
+            out = {
+                'pred_logits': self._last_decoder_output(out_logits),
+                'pred_boxes': self._last_decoder_output(out_bboxes),
+            }
             if return_masks:
                 out['pred_masks'] = self._get_mask_logits(out_queries, mask_features)
             if return_contours:
