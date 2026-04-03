@@ -18,7 +18,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), '../
 import torch
 import torch.nn as nn
 
-from engine.core import YAMLConfig
+from engine.core import YAMLConfig, yaml_utils
 
 
 @contextmanager
@@ -44,7 +44,9 @@ def patch_non_tensor_extra_state(module: nn.Module):
 def main(args, ):
     """main
     """
-    cfg = YAMLConfig(args.config, resume=args.resume)
+    update_dict = yaml_utils.parse_cli(args.update)
+    update_dict.update({'resume': args.resume})
+    cfg = YAMLConfig(args.config, **update_dict)
 
     if 'HGNetv2' in cfg.yaml_cfg:
         cfg.yaml_cfg['HGNetv2']['pretrained'] = False
@@ -218,6 +220,7 @@ if __name__ == '__main__':
     parser.add_argument('--simplify',  action='store_true')
     parser.add_argument('--skip_onnxslim',  action='store_true')
     parser.add_argument('--dynamic_batch',  action='store_true')
+    parser.add_argument('-u', '--update', nargs='+', help='update yaml config')
     parser.add_argument('--fp16', '-f', action='store_true')
     parser.add_argument('--with-masks', action='store_true')
     parser.add_argument('--with-contours', action='store_true')

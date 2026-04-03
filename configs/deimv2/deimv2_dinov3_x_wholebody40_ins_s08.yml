@@ -45,6 +45,7 @@ DEIMTransformer:
 
 PostProcessor:
   num_top_queries: 800
+  k_max: 0
 
 epoches: 58
 

@@ -7,6 +7,7 @@ __include__: [
 ]
 
 output_dir: ./outputs/deimv2_hgnetv2_n_wholebody40_ins
+mask_target_class_ids: [0]
 
 HGNetv2:
   name: 'B0'
@@ -40,14 +41,16 @@ DEIMTransformer:
   num_queries: 800
   dim_feedforward: 512
   mask_feature_level: 0 # 0=stride16, 1=stride32
+  mask_compute_mode: lazy
   mask_embed_head_hidden_dim: 64
   mask_embed_head_num_layers: 2
-  use_contour_aux_head: False
-  use_distance_aux_head: False
+  use_contour_aux_head: True
+  use_distance_aux_head: True
   aux_mask_feature_level: 0 # 0=stride16, 1=stride32
 
 PostProcessor:
   num_top_queries: 800
+  k_max: 0
 
 optimizer:
   type: AdamW
@@ -128,11 +131,11 @@ DEIMCriterion:
     loss_mask_contour: 0.5
     loss_mask_distance: 0.25
   losses: ['mal', 'boxes', 'local', 'masks']
-  use_boundary_aware_loss: False
+  use_boundary_aware_loss: True
   boundary_aware_width: 3
   boundary_aware_weight: 2.0
-  use_contour_detection: False
-  use_distance_transform: False
+  use_contour_detection: True
+  use_distance_transform: True
   distance_transform_steps: 5
   matcher:
     change_matcher: True

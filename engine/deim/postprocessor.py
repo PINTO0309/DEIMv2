@@ -25,6 +25,7 @@ class PostProcessor(nn.Module):
         'num_classes',
         'use_focal_loss',
         'num_top_queries',
+        'k_max',
         'mask_target_class_ids',
         'remap_mscoco_category',
         'mask_resize_origin',
@@ -35,6 +36,7 @@ class PostProcessor(nn.Module):
         num_classes=80,
         use_focal_loss=True,
         num_top_queries=300,
+        k_max=0,
         mask_target_class_ids=None,
         remap_mscoco_category=False,
         mask_resize_origin='center',
@@ -43,6 +45,9 @@ class PostProcessor(nn.Module):
         self.use_focal_loss = use_focal_loss
         self.num_top_queries = num_top_queries
         self.num_classes = int(num_classes)
+        self.k_max = int(k_max)
+        if self.k_max < 0:
+            raise ValueError(f'Unsupported k_max={k_max}')
         self.mask_target_class_ids = [] if mask_target_class_ids is None else [int(x) for x in mask_target_class_ids]
         self.remap_mscoco_category = remap_mscoco_category
         self.deploy_mode = False
@@ -127,15 +132,66 @@ class PostProcessor(nn.Module):
         gather_index = query_index.unsqueeze(-1).expand(-1, -1, embeddings.shape[-1])
         return embeddings.gather(dim=1, index=gather_index)
 
+    def _score_tensor_for_mask_selection(self, scores: torch.Tensor) -> torch.Tensor:
+        return scores.squeeze(-1) if scores.dim() > 2 and scores.size(-1) == 1 else scores
+
+    def _select_fixed_k_positions(
+        self,
+        scores: torch.Tensor,
+        query_index: torch.Tensor,
+        target_mask: torch.Tensor,
+    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+        if self.k_max <= 0:
+            raise RuntimeError('Fixed-k selection requested while k_max <= 0.')
+
+        score_tensor = self._score_tensor_for_mask_selection(scores)
+        num_top_queries = query_index.shape[1]
+        k_select = min(self.k_max, num_top_queries)
+        fill_value = torch.full_like(score_tensor, -1.0)
+        masked_scores = torch.where(target_mask, score_tensor, fill_value)
+        selected_scores, selected_pos = torch.topk(masked_scores, k_select, dim=1)
+        valid_selected = selected_scores > -0.5
+        selected_query_index = query_index.gather(dim=1, index=selected_pos)
+        return selected_pos, selected_query_index, valid_selected
+
+    def _scatter_selected_probs(
+        self,
+        selected_probs: torch.Tensor,
+        selected_pos: torch.Tensor,
+        valid_selected: torch.Tensor,
+        num_top_queries: int,
+    ) -> torch.Tensor:
+        batch_size, _, height, width = selected_probs.shape
+        full_probs = selected_probs.new_zeros((batch_size, num_top_queries, height, width))
+        scatter_index = selected_pos[:, :, None, None].expand(-1, -1, height, width)
+        selected_probs = selected_probs * valid_selected[:, :, None, None].to(selected_probs.dtype)
+        return full_probs.scatter(dim=1, index=scatter_index, src=selected_probs)
+
     def _compute_sparse_mask_probs_deploy(
         self,
         embeddings: torch.Tensor | None,
         feature_maps: torch.Tensor | None,
         query_index: torch.Tensor,
+        scores: torch.Tensor,
         target_mask: torch.Tensor,
     ) -> torch.Tensor | None:
         if embeddings is None or feature_maps is None:
             return None
+
+        if self.k_max > 0:
+            selected_pos, selected_query_index, valid_selected = self._select_fixed_k_positions(
+                scores,
+                query_index,
+                target_mask,
+            )
+            selected_embeds = self._gather_mask_embeddings(embeddings, selected_query_index)
+            selected_probs = torch.sigmoid(torch.einsum('bkc,bchw->bkhw', selected_embeds, feature_maps))
+            return self._scatter_selected_probs(
+                selected_probs,
+                selected_pos,
+                valid_selected,
+                query_index.shape[1],
+            )
 
         topk_embeddings = self._gather_mask_embeddings(embeddings, query_index)
         selected_positions = torch.nonzero(target_mask, as_tuple=False)
@@ -156,6 +212,7 @@ class PostProcessor(nn.Module):
         embeddings: torch.Tensor | None,
         feature_maps: torch.Tensor | None,
         query_index: torch.Tensor,
+        scores: torch.Tensor,
         orig_target_sizes: torch.Tensor | None,
         target_mask: torch.Tensor,
     ) -> torch.Tensor | list[torch.Tensor] | None:
@@ -163,7 +220,34 @@ class PostProcessor(nn.Module):
             return None
 
         if orig_target_sizes is None:
-            return self._compute_sparse_mask_probs_deploy(embeddings, feature_maps, query_index, target_mask)
+            return self._compute_sparse_mask_probs_deploy(embeddings, feature_maps, query_index, scores, target_mask)
+
+        if self.k_max > 0:
+            selected_pos, selected_query_index, valid_selected = self._select_fixed_k_positions(
+                scores,
+                query_index,
+                target_mask,
+            )
+            selected_embeddings = self._gather_mask_embeddings(embeddings, selected_query_index)
+            gathered = []
+            for batch_idx in range(selected_embeddings.shape[0]):
+                orig_w, orig_h = orig_target_sizes[batch_idx].tolist()
+                batch_output = feature_maps.new_zeros(
+                    (query_index.shape[1], 1, int(orig_h), int(orig_w))
+                )
+                selected_logits = torch.einsum(
+                    'kc,chw->khw',
+                    selected_embeddings[batch_idx],
+                    feature_maps[batch_idx],
+                )
+                resized_masks = self.resize_masks(
+                    selected_logits.unsqueeze(1),
+                    size=(int(orig_h), int(orig_w)),
+                ).sigmoid()
+                resized_masks = resized_masks * valid_selected[batch_idx, :, None, None].to(resized_masks.dtype)
+                batch_output[selected_pos[batch_idx]] = resized_masks
+                gathered.append(batch_output)
+            return gathered
 
         topk_embeddings = self._gather_mask_embeddings(embeddings, query_index)
         gathered = []
@@ -230,6 +314,7 @@ class PostProcessor(nn.Module):
                 mask_embed,
                 mask_features,
                 query_index,
+                scores,
                 orig_target_sizes,
                 target_mask,
             )
@@ -240,6 +325,7 @@ class PostProcessor(nn.Module):
                 contour_embeds,
                 contour_features,
                 query_index,
+                scores,
                 orig_target_sizes,
                 target_mask,
             )
