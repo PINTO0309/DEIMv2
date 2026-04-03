@@ -209,7 +209,7 @@ Example config:
 ```yaml
 PostProcessor:
   num_top_queries: 800
-  k_max: 32
+  k_max: 20
 ```
 
 You can also override it only at export time without editing the YAML file:
@@ -220,21 +220,23 @@ uv run python tools/deployment/export_onnx.py \
 -r ckpts/deimv2_dinov3_x_wholebody40_ins_s08.pth \
 --opset 17 \
 --with-masks \
--u PostProcessor.k_max=32
+-u PostProcessor.k_max=20
 ```
 
 For the command above:
 
 - `label_xyxy_score` remains `[B, 800, 6]`
 - `masks` remains `[B, 800, H, W]`
-- only up to `32` target detections go through the actual mask `einsum`
+- only up to `20` target detections go through the actual mask `einsum`
 - non-selected rows in `masks` are filled with zeros
 
 Recommended usage:
 
 - Use `k_max: 0` when you want the most faithful sparse path and your runtime tolerates `NonZero`.
-- Use `k_max: 16`, `32`, or `48` when you want a fixed-size ONNX graph for TensorRT-oriented deployment.
-- Set `k_max` large enough to cover the expected maximum number of target instances in one image. For example, if at most about 20 persons are expected, `k_max: 32` is a practical starting point.
+- Any integer `k_max >= 1` is valid. It is not limited to a predefined set of values such as `16`, `32`, or `48`.
+- Use any value that matches your deployment assumption. For example, `k_max: 20` is valid if you expect at most about 20 target instances per image.
+- If you want extra safety for occasional crowd scenes, choose a slightly larger value such as `24` or `32`.
+- Larger `k_max` keeps more mask candidates but increases fixed mask-path cost. Smaller `k_max` is faster but may zero out masks for detections beyond that limit.
 
 <img width="808" height="704" alt="image" src="https://github.com/user-attachments/assets/82606a50-c294-43f2-b617-a653a6ba5424" />
 
