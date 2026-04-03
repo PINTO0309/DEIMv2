@@ -177,6 +177,23 @@ class BatchImageCollateFunction(BaseCollateFunction):
         self.print_info_flag = state_dict.get('print_info_flag', True)
         self.print_copyblend_flag = state_dict.get('print_copyblend_flag', True)
 
+    def _guard_unsupported_instance_augmentations(self, targets):
+        has_mask_supervision = any('masks' in target or 'mask_valid' in target for target in targets)
+        if not has_mask_supervision:
+            return
+
+        if self.mixup_prob > 0:
+            raise RuntimeError(
+                'MixUp is not supported when instance mask supervision is enabled. '
+                'It updates boxes/labels without keeping masks and mask_valid aligned.'
+            )
+
+        if self.copyblend_prob > 0:
+            raise RuntimeError(
+                'CopyBlend is not supported when instance mask supervision is enabled. '
+                'It updates boxes/labels without keeping masks and mask_valid aligned.'
+            )
+
     def apply_mixup(self, images, targets):
         """
         Applies Mixup augmentation to the batch if conditions are met.
@@ -374,6 +391,7 @@ class BatchImageCollateFunction(BaseCollateFunction):
     def __call__(self, items):
         images = torch.cat([x[0][None] for x in items], dim=0)
         targets = [x[1] for x in items]
+        self._guard_unsupported_instance_augmentations(targets)
 
         # Mixup
         images, targets = self.apply_mixup(images, targets)

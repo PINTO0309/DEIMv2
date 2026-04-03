@@ -18,7 +18,7 @@ from torch.utils._pytree import tree_flatten, tree_unflatten
 
 from .._misc import convert_to_tv_tensor, _boxes_keys
 from .._misc import Image, Video, Mask, BoundingBoxes
-from .._misc import SanitizeBoundingBoxes
+from .._misc import SanitizeBoundingBoxes as TVSanitizeBoundingBoxes
 
 from ...core import register
 from ...misc.mask_resize import resize_masks
@@ -31,9 +31,58 @@ RandomHorizontalFlip = register()(T.RandomHorizontalFlip)
 # ToImageTensor = register()(T.ToImageTensor)
 # ConvertDtype = register()(T.ConvertDtype)
 # PILToTensor = register()(T.PILToTensor)
-SanitizeBoundingBoxes = register(name='SanitizeBoundingBoxes')(SanitizeBoundingBoxes)
 RandomCrop = register()(T.RandomCrop)
 Normalize = register()(T.Normalize)
+
+
+@register(name='SanitizeBoundingBoxes')
+class SanitizeBoundingBoxes(TVSanitizeBoundingBoxes):
+    """Keep object-level target fields aligned when invalid boxes are removed."""
+
+    _OBJECT_LEVEL_TARGET_KEYS = (
+        'labels',
+        'area',
+        'iscrowd',
+        'mask_valid',
+        'segm_eval_valid',
+        'mixup',
+        'keypoints',
+    )
+
+    def __init__(
+        self,
+        min_size: float = 1.0,
+        min_area: float = 1.0,
+        labels_getter: Any = 'default',
+    ) -> None:
+        if labels_getter == 'default':
+            labels_getter = self._default_object_fields_getter
+        super().__init__(min_size=min_size, min_area=min_area, labels_getter=labels_getter)
+
+    @classmethod
+    def _default_object_fields_getter(cls, inputs: Any):
+        target = None
+        if isinstance(inputs, dict):
+            target = inputs
+        elif isinstance(inputs, (tuple, list)) and len(inputs) >= 2 and isinstance(inputs[1], dict):
+            target = inputs[1]
+
+        if target is None:
+            return None
+
+        boxes = target.get('boxes')
+        if not isinstance(boxes, torch.Tensor) or boxes.ndim == 0:
+            labels = target.get('labels')
+            return labels if isinstance(labels, torch.Tensor) else None
+
+        num_boxes = int(boxes.shape[0])
+        object_fields = []
+        for key in cls._OBJECT_LEVEL_TARGET_KEYS:
+            value = target.get(key)
+            if isinstance(value, torch.Tensor) and value.ndim > 0 and int(value.shape[0]) == num_boxes:
+                object_fields.append(value)
+
+        return tuple(object_fields) if object_fields else None
 
 
 @register()
