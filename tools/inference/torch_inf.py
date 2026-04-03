@@ -136,8 +136,13 @@ def main(args):
             self.postprocessor = cfg.postprocessor.deploy()
 
         def forward(self, images, orig_target_sizes):
-            outputs = self.model(images)
-            outputs = self.postprocessor(outputs, orig_target_sizes)
+            outputs = self.model(images, return_masks=False, return_contours=False)
+            outputs = self.postprocessor(
+                outputs,
+                orig_target_sizes,
+                return_masks=False,
+                return_contours=False,
+            )
             return outputs
 
     device = args.device

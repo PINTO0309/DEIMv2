@@ -11,19 +11,42 @@ Copyright (c) 2023 lyuwenyu. All Rights Reserved.
 
 import os
 import sys
+from contextlib import contextmanager
 
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), '../..'))
 
 import torch
 import torch.nn as nn
 
-from engine.core import YAMLConfig
+from engine.core import YAMLConfig, yaml_utils
+
+
+@contextmanager
+def patch_non_tensor_extra_state(module: nn.Module):
+    patched = []
+    for submodule in module.modules():
+        if type(submodule).get_extra_state is nn.Module.get_extra_state:
+            continue
+        extra_state = submodule.get_extra_state()
+        if torch.is_tensor(extra_state):
+            continue
+        original = submodule.get_extra_state
+        submodule.get_extra_state = lambda: torch.empty(0)
+        patched.append((submodule, original))
+
+    try:
+        yield
+    finally:
+        for submodule, original in patched:
+            submodule.get_extra_state = original
 
 
 def main(args, ):
     """main
     """
-    cfg = YAMLConfig(args.config, resume=args.resume)
+    update_dict = yaml_utils.parse_cli(args.update)
+    update_dict.update({'resume': args.resume})
+    cfg = YAMLConfig(args.config, **update_dict)
 
     if 'HGNetv2' in cfg.yaml_cfg:
         cfg.yaml_cfg['HGNetv2']['pretrained'] = False
@@ -47,10 +70,21 @@ def main(args, ):
             super().__init__()
             self.model = cfg.model.deploy()
             self.postprocessor = cfg.postprocessor.deploy()
+            self.return_masks = args.with_masks
+            self.return_contours = args.with_contours
 
         def forward(self, images, orig_target_sizes: torch.Tensor=None):
-            outputs = self.model(images)
-            outputs = self.postprocessor(outputs, orig_target_sizes)
+            outputs = self.model(
+                images,
+                return_masks=self.return_masks,
+                return_contours=self.return_contours,
+            )
+            outputs = self.postprocessor(
+                outputs,
+                orig_target_sizes,
+                return_masks=self.return_masks,
+                return_contours=self.return_contours,
+            )
             return outputs
 
     model = Model()
@@ -63,15 +97,30 @@ def main(args, ):
     data = torch.rand(1, 3, *img_size)
     _ = model(data)
 
+    output_names = ['label_xyxy_score']
+    if args.with_masks:
+        output_names.append('masks')
+    if args.with_contours:
+        output_names.append('contours')
+
     dynamic_axes = {}
     if args.dynamic_batch:
         dynamic_axes = {
             'images': {0: 'N'},
             'label_xyxy_score': {0: 'N', 1: str(num_queries), 2: '6'},
         }
+        if args.with_masks:
+            dynamic_axes['masks'] = {0: 'N', 1: str(num_queries)}
+        if args.with_contours:
+            dynamic_axes['contours'] = {0: 'N', 1: str(num_queries)}
 
-    output_file = f'{os.path.splitext(os.path.basename(args.config))[0]}_{num_queries}query.onnx'
+    output_file = f'{os.path.splitext(os.path.basename(args.config))[0]}_{num_queries}query'
+    if args.with_masks:
+        output_file = f'{output_file}_masks'
+    if args.with_contours:
+        output_file = f'{output_file}_contours'
     fp16_txt = '' if not args.fp16 else '_fp16'
+    export_path = f'{output_file}{"_n_batch" if args.dynamic_batch else ""}{fp16_txt}.onnx'
 
     if not args.dynamic_batch:
         if not args.fp16:
@@ -79,15 +128,16 @@ def main(args, ):
             data = torch.randn(1, 3, h, w)
             _ = model(data)
 
-            torch.onnx.export(
-                model,
-                (data),
-                f'{os.path.splitext(os.path.basename(output_file))[0]}{fp16_txt}.onnx',
-                input_names=['images'],
-                output_names=['label_xyxy_score'],
-                dynamic_axes=None,
-                opset_version=17,
-            )
+            with patch_non_tensor_extra_state(model):
+                torch.onnx.export(
+                    model,
+                    (data),
+                    export_path,
+                    input_names=['images'],
+                    output_names=output_names,
+                    dynamic_axes=None,
+                    opset_version=args.opset,
+                )
         else:
             model.cuda()
             with torch.autocast("cuda", dtype=torch.float16):
@@ -95,30 +145,32 @@ def main(args, ):
                 data = torch.randn(1, 3, h, w, device="cuda")
                 _ = model(data)
 
-                torch.onnx.export(
-                    model,
-                    (data),
-                    f'{os.path.splitext(os.path.basename(output_file))[0]}{fp16_txt}.onnx',
-                    input_names=['images'],
-                    output_names=['label_xyxy_score'],
-                    dynamic_axes=None,
-                    opset_version=17,
-                )
+                with patch_non_tensor_extra_state(model):
+                    torch.onnx.export(
+                        model,
+                        (data),
+                        export_path,
+                        input_names=['images'],
+                        output_names=output_names,
+                        dynamic_axes=None,
+                        opset_version=args.opset,
+                    )
     else:
         if not args.fp16:
             h, w = args.size
             data = torch.randn(1, 3, h, w)
             _ = model(data)
 
-            torch.onnx.export(
-                model,
-                (data),
-                f'{os.path.splitext(os.path.basename(output_file))[0]}_n_batch{fp16_txt}.onnx',
-                input_names=['images'],
-                output_names=['label_xyxy_score'],
-                dynamic_axes=dynamic_axes,
-                opset_version=17,
-            )
+            with patch_non_tensor_extra_state(model):
+                torch.onnx.export(
+                    model,
+                    (data),
+                    export_path,
+                    input_names=['images'],
+                    output_names=output_names,
+                    dynamic_axes=dynamic_axes,
+                    opset_version=args.opset,
+                )
         else:
             model.cuda()
             with torch.autocast("cuda", dtype=torch.float16):
@@ -126,19 +178,20 @@ def main(args, ):
                 data = torch.randn(1, 3, h, w, device="cuda")
                 _ = model(data)
 
-                torch.onnx.export(
-                    model,
-                    (data),
-                    f'{os.path.splitext(os.path.basename(output_file))[0]}_n_batch{fp16_txt}.onnx',
-                    input_names=['images'],
-                    output_names=['label_xyxy_score'],
-                    dynamic_axes=dynamic_axes,
-                    opset_version=17,
-                )
+                with patch_non_tensor_extra_state(model):
+                    torch.onnx.export(
+                        model,
+                        (data),
+                        export_path,
+                        input_names=['images'],
+                        output_names=output_names,
+                        dynamic_axes=dynamic_axes,
+                        opset_version=args.opset,
+                    )
 
     if args.check:
         import onnx
-        onnx_model = onnx.load(output_file)
+        onnx_model = onnx.load(export_path)
         onnx.checker.check_model(onnx_model)
         print('Check export onnx model done...')
 
@@ -147,11 +200,11 @@ def main(args, ):
         import onnxsim
         import onnxslim
         if not args.skip_onnxslim:
-            onnx_model_slim = onnxslim.slim(output_file)
+            onnx_model_slim = onnxslim.slim(export_path)
             onnx_model_simplify, check = onnxsim.simplify(onnx_model_slim)
         else:
-            onnx_model_simplify, check = onnxsim.simplify(output_file)
-        onnx.save(onnx_model_simplify, output_file)
+            onnx_model_simplify, check = onnxsim.simplify(export_path)
+        onnx.save(onnx_model_simplify, export_path)
         print(f'Simplify onnx model {check}...')
 
 
@@ -167,6 +220,9 @@ if __name__ == '__main__':
     parser.add_argument('--simplify',  action='store_true')
     parser.add_argument('--skip_onnxslim',  action='store_true')
     parser.add_argument('--dynamic_batch',  action='store_true')
+    parser.add_argument('-u', '--update', nargs='+', help='update yaml config')
     parser.add_argument('--fp16', '-f', action='store_true')
+    parser.add_argument('--with-masks', action='store_true')
+    parser.add_argument('--with-contours', action='store_true')
     args = parser.parse_args()
     main(args)

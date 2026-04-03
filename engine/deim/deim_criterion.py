@@ -25,7 +25,7 @@ from ..core import register
 class DEIMCriterion(nn.Module):
     """ This class computes the loss for DEIM.
     """
-    __share__ = ['num_classes', 'mask_category_ids', 'mask_resize_origin']
+    __share__ = ['num_classes', 'mask_category_ids', 'mask_target_class_ids', 'mask_resize_origin']
     __inject__ = ['matcher', ]
 
     def __init__(self, \
@@ -37,6 +37,7 @@ class DEIMCriterion(nn.Module):
         num_classes=80,
         reg_max=32,
         mask_category_ids=None,
+        mask_target_class_ids=None,
         mask_resize_origin='center',
         boxes_weight_format=None,
         share_matched_indices=False,
@@ -71,6 +72,9 @@ class DEIMCriterion(nn.Module):
         self.own_targets, self.own_targets_dn = None, None
         self.reg_max = reg_max
         self.mask_category_ids = [] if mask_category_ids is None else list(mask_category_ids)
+        if mask_target_class_ids is None:
+            mask_target_class_ids = self.mask_category_ids
+        self.mask_target_class_ids = [] if mask_target_class_ids is None else list(mask_target_class_ids)
         self.mask_resize_origin = mask_resize_origin
         self.num_pos, self.num_neg = None, None
         self.mal_alpha = mal_alpha
@@ -93,6 +97,7 @@ class DEIMCriterion(nn.Module):
             'gamma': self.gamma,
             'reg_max': self.reg_max,
             'mask_category_ids': copy.deepcopy(self.mask_category_ids),
+            'mask_target_class_ids': copy.deepcopy(self.mask_target_class_ids),
             'mask_resize_origin': self.mask_resize_origin,
             'mal_alpha': self.mal_alpha,
             'use_uni_set': self.use_uni_set,
@@ -116,6 +121,7 @@ class DEIMCriterion(nn.Module):
         self.gamma = state.get('gamma', self.gamma)
         self.reg_max = state.get('reg_max', self.reg_max)
         self.mask_category_ids = copy.deepcopy(state.get('mask_category_ids', self.mask_category_ids))
+        self.mask_target_class_ids = copy.deepcopy(state.get('mask_target_class_ids', self.mask_target_class_ids))
         self.mask_resize_origin = state.get('mask_resize_origin', self.mask_resize_origin)
         self.mal_alpha = state.get('mal_alpha', self.mal_alpha)
         self.use_uni_set = state.get('use_uni_set', self.use_uni_set)
@@ -276,10 +282,10 @@ class DEIMCriterion(nn.Module):
         return losses
 
     def loss_masks(self, outputs, targets, indices, num_boxes):
-        if 'pred_masks' not in outputs:
+        if 'pred_masks' not in outputs and 'mask_embed' not in outputs:
             return {}
 
-        zero = outputs['pred_masks'].sum() * 0
+        zero = self._get_mask_zero(outputs)
 
         src_masks_list = []
         src_contours_list = []
@@ -291,28 +297,52 @@ class DEIMCriterion(nn.Module):
                 continue
             if 'masks' not in target or 'mask_valid' not in target:
                 raise KeyError('Body-only mask supervision requires `masks` and `mask_valid` in targets.')
-            valid = target['mask_valid'][matched_target_idx]
+            valid = self._select_valid_mask_matches(target, matched_target_idx)
             if valid.numel() == 0 or not valid.any():
                 continue
-            src_masks_list.append(outputs['pred_masks'][batch_idx, matched_pred_idx[valid]])
-            if self.use_contour_detection and 'pred_mask_contours' in outputs:
-                src_contours_list.append(outputs['pred_mask_contours'][batch_idx, matched_pred_idx[valid]])
-            if self.use_distance_transform and 'pred_mask_distances' in outputs:
-                src_distances_list.append(outputs['pred_mask_distances'][batch_idx, matched_pred_idx[valid]])
+            selected_pred_idx = matched_pred_idx[valid]
+            if 'pred_masks' in outputs:
+                src_masks_list.append(outputs['pred_masks'][batch_idx, selected_pred_idx])
+            else:
+                src_masks_list.append(
+                    self._compute_sparse_mask_logits(
+                        outputs['mask_embed'],
+                        outputs['mask_features'],
+                        batch_idx,
+                        selected_pred_idx,
+                    )
+                )
+            if self.use_contour_detection:
+                if 'pred_mask_contours' in outputs:
+                    src_contours_list.append(outputs['pred_mask_contours'][batch_idx, selected_pred_idx])
+                elif 'pred_mask_contour_embeds' in outputs and 'pred_mask_contour_features' in outputs:
+                    src_contours_list.append(
+                        self._compute_sparse_mask_logits(
+                            outputs['pred_mask_contour_embeds'],
+                            outputs['pred_mask_contour_features'],
+                            batch_idx,
+                            selected_pred_idx,
+                        )
+                    )
+            if self.use_distance_transform:
+                if 'pred_mask_distances' in outputs:
+                    src_distances_list.append(outputs['pred_mask_distances'][batch_idx, selected_pred_idx])
+                elif 'pred_mask_distance_embeds' in outputs and 'pred_mask_distance_features' in outputs:
+                    src_distances_list.append(
+                        self._compute_sparse_mask_logits(
+                            outputs['pred_mask_distance_embeds'],
+                            outputs['pred_mask_distance_features'],
+                            batch_idx,
+                            selected_pred_idx,
+                        )
+                    )
             target_masks.append(
                 target['masks'][matched_target_idx[valid]]
             )
             valid_masks.append(valid.sum())
 
         if not src_masks_list:
-            losses = {'loss_mask_bce': zero, 'loss_mask_dice': zero}
-            if self.use_boundary_aware_loss:
-                losses['loss_mask_boundary'] = zero
-            if self.use_contour_detection:
-                losses['loss_mask_contour'] = zero
-            if self.use_distance_transform:
-                losses['loss_mask_distance'] = zero
-            return losses
+            return self._build_zero_mask_losses(zero)
 
         src_masks = torch.cat(src_masks_list, dim=0)
         target_masks = torch.cat(target_masks, dim=0)
@@ -371,6 +401,47 @@ class DEIMCriterion(nn.Module):
             losses['loss_mask_distance'] = loss_mask_distance
 
         return losses
+
+    def _get_mask_zero(self, outputs):
+        for key in (
+            'pred_masks',
+            'mask_embed',
+            'mask_features',
+            'pred_mask_contours',
+            'pred_mask_contour_embeds',
+            'pred_mask_distances',
+            'pred_mask_distance_embeds',
+        ):
+            value = outputs.get(key)
+            if torch.is_tensor(value):
+                return value.sum() * 0
+        raise KeyError('Mask loss requested but no tensor outputs are available to build a zero scalar.')
+
+    def _build_zero_mask_losses(self, zero):
+        losses = {'loss_mask_bce': zero, 'loss_mask_dice': zero}
+        if self.use_boundary_aware_loss:
+            losses['loss_mask_boundary'] = zero
+        if self.use_contour_detection:
+            losses['loss_mask_contour'] = zero
+        if self.use_distance_transform:
+            losses['loss_mask_distance'] = zero
+        return losses
+
+    def _select_valid_mask_matches(self, target, matched_target_idx):
+        valid = target['mask_valid'][matched_target_idx]
+        if self.mask_target_class_ids:
+            labels = target['labels'][matched_target_idx]
+            class_mask = torch.stack(
+                [labels == int(class_id) for class_id in self.mask_target_class_ids],
+                dim=0,
+            ).any(dim=0)
+            valid = valid & class_mask
+        return valid
+
+    def _compute_sparse_mask_logits(self, embeds, features, batch_idx, selected_pred_idx):
+        selected_embeds = embeds[batch_idx, selected_pred_idx]
+        feature_map = features[batch_idx]
+        return torch.einsum('qc,chw->qhw', selected_embeds, feature_map)
 
     def _build_boundary_weight_map(
         self,

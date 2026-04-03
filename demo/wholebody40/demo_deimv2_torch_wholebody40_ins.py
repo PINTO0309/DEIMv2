@@ -22,7 +22,8 @@ from PIL import Image, ImageColor
 from tqdm import tqdm
 
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '../..')))
-from engine.core import YAMLConfig
+from engine.core import YAMLConfig, load_config
+from engine.misc.mask_resize import resize_masks
 
 
 AVERAGE_HEAD_WIDTH: float = 0.16 + 0.10
@@ -168,6 +169,61 @@ def resolve_device(device_arg: str | None) -> torch.device:
     if device_arg:
         return torch.device(device_arg)
     return torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+
+
+def is_onnx_model(model_path: Path) -> bool:
+    return model_path.suffix.lower() == '.onnx'
+
+
+def build_onnx_providers(device_arg: str | None, model_path: Path, inference_type: str):
+    import onnxruntime as ort
+
+    available_providers = set(ort.get_available_providers())
+    requested = (device_arg or '').lower()
+    inference_type = inference_type.lower()
+
+    if requested.startswith('cuda'):
+        if 'CUDAExecutionProvider' not in available_providers:
+            raise RuntimeError('CUDAExecutionProvider is not available in this onnxruntime build.')
+        return ['CUDAExecutionProvider', 'CPUExecutionProvider']
+
+    if requested == 'tensorrt':
+        if 'TensorrtExecutionProvider' not in available_providers:
+            raise RuntimeError('TensorrtExecutionProvider is not available in this onnxruntime build.')
+        ep_type_params = {}
+        if inference_type == 'fp16':
+            ep_type_params = {
+                'trt_fp16_enable': True,
+            }
+        elif inference_type == 'int8':
+            ep_type_params = {
+                'trt_fp16_enable': True,
+                'trt_int8_enable': True,
+                'trt_int8_calibration_table_name': 'calibration.flatbuffers',
+            }
+        else:
+            raise ValueError(f'Unsupported inference type for TensorRT: {inference_type}')
+        providers = [
+            (
+                'TensorrtExecutionProvider',
+                {
+                    'trt_engine_cache_enable': True,
+                    'trt_engine_cache_path': str(model_path.parent),
+                    'trt_op_types_to_exclude': 'NonMaxSuppression,NonZero,RoiAlign',
+                } | ep_type_params,
+            )
+        ]
+        if 'CUDAExecutionProvider' in available_providers:
+            providers.append('CUDAExecutionProvider')
+        providers.append('CPUExecutionProvider')
+        return providers
+
+    if requested and requested != 'cpu':
+        raise ValueError(f'Unsupported ONNX device: {device_arg}. Use cpu, cuda, cuda:0, or tensorrt.')
+
+    if device_arg is None and 'CUDAExecutionProvider' in available_providers:
+        return ['CUDAExecutionProvider', 'CPUExecutionProvider']
+    return ['CPUExecutionProvider']
 
 
 def build_transform(image_size: Sequence[int], normalize: bool) -> T.Compose:
@@ -380,10 +436,15 @@ def prepare_prediction_payload(
     boxes: List[Box],
     result: Dict[str, torch.Tensor],
     mask_threshold: float,
+    enable_masks: bool,
+    enable_contours: bool,
 ) -> List[Dict[str, object]]:
-    masks = result.get('masks')
+    masks = result.get('masks') if enable_masks else None
     if masks is not None:
         masks = masks.detach().cpu()
+    contours = result.get('contours') if enable_contours else None
+    if contours is not None:
+        contours = contours.detach().cpu()
 
     records: List[Dict[str, object]] = []
     for box in boxes:
@@ -403,6 +464,13 @@ def prepare_prediction_payload(
             if mask_bbox is not None:
                 record['mask_area'] = int(binary_mask.sum())
                 record['mask_bbox'] = mask_bbox
+
+        if contours is not None and box.classid == BODY_CLASS_ID and box.source_idx >= 0:
+            binary_contour = contours[box.source_idx, 0].numpy() >= mask_threshold
+            contour_bbox = binary_mask_bbox(binary_contour)
+            if contour_bbox is not None:
+                record['contour_area'] = int(binary_contour.sum())
+                record['contour_bbox'] = contour_bbox
 
         records.append(record)
     return records
@@ -440,6 +508,45 @@ def overlay_body_masks(
     base = image.convert('RGBA')
     mask_image = Image.fromarray(overlay)
     return Image.alpha_composite(base, mask_image).convert('RGB')
+
+
+def overlay_body_contours(
+    image: Image.Image,
+    result: Dict[str, torch.Tensor],
+    boxes: List[Box],
+    contour_threshold: float,
+    disable_render_classids: set[int],
+) -> Image.Image:
+    contours = result.get('contours')
+    if contours is None or BODY_CLASS_ID in disable_render_classids:
+        return image
+
+    contours = contours.detach().cpu()
+    rendered = cv2.cvtColor(np.array(image), cv2.COLOR_RGB2BGR)
+    body_instance_idx = 0
+
+    for box in boxes:
+        if box.classid != BODY_CLASS_ID or box.source_idx < 0:
+            continue
+        binary_contour = (contours[box.source_idx, 0].numpy() >= contour_threshold).astype(np.uint8)
+        if not binary_contour.any():
+            continue
+
+        contour_segments, _ = cv2.findContours(binary_contour, cv2.RETR_LIST, cv2.CHAIN_APPROX_NONE)
+        if not contour_segments:
+            continue
+
+        instance_color = make_instance_color(body_instance_idx)
+        cv2.drawContours(
+            rendered,
+            contour_segments,
+            contourIdx=-1,
+            color=(instance_color[2], instance_color[1], instance_color[0]),
+            thickness=1,
+        )
+        body_instance_idx += 1
+
+    return Image.fromarray(cv2.cvtColor(rendered, cv2.COLOR_BGR2RGB))
 
 
 def draw_dashed_line(
@@ -852,11 +959,129 @@ class InferenceModel(nn.Module):
         self.device = device
 
     @torch.inference_mode()
-    def forward(self, image_tensor: torch.Tensor, orig_target_sizes: torch.Tensor):
-        outputs = self.model(image_tensor)
+    def forward(
+        self,
+        image_tensor: torch.Tensor,
+        orig_target_sizes: torch.Tensor,
+        return_masks: bool=False,
+        return_contours: bool=False,
+    ):
+        outputs = self.model(
+            image_tensor,
+            return_masks=return_masks,
+            return_contours=return_contours,
+        )
         outputs = move_to_device(outputs, torch.device('cpu'))
         orig_target_sizes = orig_target_sizes.to('cpu')
-        return self.postprocessor(outputs, orig_target_sizes)
+        return self.postprocessor(
+            outputs,
+            orig_target_sizes,
+            return_masks=return_masks,
+            return_contours=return_contours,
+        )
+
+
+class OnnxInferenceModel:
+    def __init__(
+        self,
+        model_path: Path,
+        device_arg: str | None,
+        inference_type: str,
+        mask_resize_origin: str = 'topleft',
+    ):
+        try:
+            import onnxruntime as ort
+        except ImportError as exc:
+            raise ImportError('onnxruntime is required for ONNX inference.') from exc
+
+        providers = build_onnx_providers(device_arg, model_path, inference_type)
+        session_options = ort.SessionOptions()
+        self.session = ort.InferenceSession(
+            str(model_path),
+            sess_options=session_options,
+            providers=providers,
+        )
+        self.input_names = {inp.name for inp in self.session.get_inputs()}
+        self.output_names = [out.name for out in self.session.get_outputs()]
+        self.mask_resize_origin = mask_resize_origin
+        self.providers = self.session.get_providers()
+        image_input = self.session.get_inputs()[0]
+        image_shape = image_input.shape
+        self.image_size = tuple(int(v) for v in image_shape[2:4]) if len(image_shape) >= 4 and all(isinstance(v, int) for v in image_shape[2:4]) else None
+
+    def _decode_label_xyxy_score(
+        self,
+        label_xyxy_score: np.ndarray,
+        orig_target_sizes: torch.Tensor,
+    ) -> List[Dict[str, torch.Tensor]]:
+        batch_results: List[Dict[str, torch.Tensor]] = []
+        for batch_idx in range(label_xyxy_score.shape[0]):
+            batch_pred = label_xyxy_score[batch_idx]
+            boxes = torch.from_numpy(batch_pred[:, 1:5].astype(np.float32, copy=False))
+            if 'orig_target_sizes' not in self.input_names:
+                orig_w = float(orig_target_sizes[batch_idx, 0].item())
+                orig_h = float(orig_target_sizes[batch_idx, 1].item())
+                boxes[:, 0::2] *= orig_w
+                boxes[:, 1::2] *= orig_h
+            batch_results.append(
+                {
+                    'labels': torch.from_numpy(batch_pred[:, 0].astype(np.int64, copy=False)),
+                    'boxes': boxes,
+                    'scores': torch.from_numpy(batch_pred[:, 5].astype(np.float32, copy=False)),
+                }
+            )
+        return batch_results
+
+    def _resize_mask_batch(
+        self,
+        masks: np.ndarray,
+        orig_target_sizes: torch.Tensor,
+    ) -> List[torch.Tensor]:
+        resized_batches: List[torch.Tensor] = []
+        for batch_idx in range(masks.shape[0]):
+            batch_masks = torch.from_numpy(masks[batch_idx]).to(dtype=torch.float32)
+            batch_masks = resize_masks(
+                batch_masks.unsqueeze(1),
+                size=tuple(int(v) for v in orig_target_sizes[batch_idx, [1, 0]].tolist()),
+                mode='bilinear',
+                origin=self.mask_resize_origin,
+            )
+            resized_batches.append(batch_masks)
+        return resized_batches
+
+    @torch.inference_mode()
+    def __call__(
+        self,
+        image_tensor: torch.Tensor,
+        orig_target_sizes: torch.Tensor,
+        return_masks: bool = False,
+        return_contours: bool = False,
+    ):
+        input_feed = {'images': image_tensor.detach().cpu().numpy().astype(np.float32, copy=False)}
+        if 'orig_target_sizes' in self.input_names:
+            input_feed['orig_target_sizes'] = orig_target_sizes.detach().cpu().numpy().astype(np.float32, copy=False)
+
+        output_values = self.session.run(self.output_names, input_feed)
+        outputs = dict(zip(self.output_names, output_values))
+
+        if 'label_xyxy_score' not in outputs:
+            raise KeyError('ONNX model output `label_xyxy_score` is required.')
+
+        results = self._decode_label_xyxy_score(outputs['label_xyxy_score'], orig_target_sizes)
+
+        if return_masks:
+            if 'masks' not in outputs:
+                raise RuntimeError('ONNX model does not provide `masks`, but --enable-masks was requested.')
+            for result, masks in zip(results, self._resize_mask_batch(outputs['masks'], orig_target_sizes)):
+                result['masks'] = masks
+
+        if return_contours:
+            if 'contours' not in outputs:
+                raise RuntimeError('ONNX model does not provide `contours`, but --enable-contours was requested.')
+            for result, contours in zip(results, self._resize_mask_batch(outputs['contours'], orig_target_sizes)):
+                result['contours'] = contours
+
+        return results
 
 
 def save_predictions_json(output_dir: Path, image_path: Path, records: List[Dict[str, object]]) -> None:
@@ -875,11 +1100,12 @@ def process_images(args) -> None:
     resume_path = Path(args.resume)
     images_dir = Path(args.images_dir)
     output_dir = Path(args.output_dir)
+    use_onnx = is_onnx_model(resume_path)
 
     if not config_path.exists():
         raise FileNotFoundError(f'Config file not found: {config_path}')
     if not resume_path.exists():
-        raise FileNotFoundError(f'Checkpoint file not found: {resume_path}')
+        raise FileNotFoundError(f'Model file not found: {resume_path}')
     if not images_dir.exists() or not images_dir.is_dir():
         raise FileNotFoundError(f'Image directory not found: {images_dir}')
 
@@ -889,18 +1115,31 @@ def process_images(args) -> None:
 
     output_dir.mkdir(parents=True, exist_ok=True)
 
-    cfg = YAMLConfig(str(config_path), resume=str(resume_path))
-    if 'HGNetv2' in cfg.yaml_cfg:
-        cfg.yaml_cfg['HGNetv2']['pretrained'] = False
-    if 'DINOv3STAs' in cfg.yaml_cfg:
-        cfg.yaml_cfg['DINOv3STAs']['weights_path'] = None
+    if use_onnx:
+        yaml_cfg = load_config(str(config_path))
+        model = OnnxInferenceModel(
+            resume_path,
+            args.device,
+            args.inference_type,
+            mask_resize_origin=args.mask_resize_origin,
+        )
+        image_size = model.image_size or tuple(yaml_cfg['eval_spatial_size'])
+        normalize = bool(yaml_cfg.get('DINOv3STAs', False))
+    else:
+        if (args.device or '').lower() == 'tensorrt':
+            raise ValueError('TensorRT inference is only supported when --resume points to an ONNX model.')
+        cfg = YAMLConfig(str(config_path), resume=str(resume_path))
+        if 'HGNetv2' in cfg.yaml_cfg:
+            cfg.yaml_cfg['HGNetv2']['pretrained'] = False
+        if 'DINOv3STAs' in cfg.yaml_cfg:
+            cfg.yaml_cfg['DINOv3STAs']['weights_path'] = None
 
-    state_dict = load_checkpoint_state(resume_path)
-    device = resolve_device(args.device)
-    model = InferenceModel(cfg, state_dict, device, mask_resize_origin=args.mask_resize_origin)
+        state_dict = load_checkpoint_state(resume_path)
+        device = resolve_device(args.device)
+        model = InferenceModel(cfg, state_dict, device, mask_resize_origin=args.mask_resize_origin)
+        image_size = cfg.yaml_cfg['eval_spatial_size']
+        normalize = bool(cfg.yaml_cfg.get('DINOv3STAs', False))
 
-    image_size = cfg.yaml_cfg['eval_spatial_size']
-    normalize = bool(cfg.yaml_cfg.get('DINOv3STAs', False))
     transform = build_transform(image_size, normalize)
 
     object_score_threshold = args.object_score_threshold if args.object_score_threshold is not None else args.score_threshold
@@ -909,9 +1148,15 @@ def process_images(args) -> None:
     disable_render_classids = set(args.disable_render_classids)
 
     print(f'Processing {len(image_paths)} images from {images_dir}')
-    print(f'Using checkpoint: {resume_path}')
+    print(f'Using model: {resume_path}')
+    if use_onnx:
+        print(f'ONNX providers: {model.providers}')
+    else:
+        print(f'Device: {device}')
     print(f'Output directory: {output_dir}')
     print(f'Mask resize origin: {args.mask_resize_origin}')
+    print(f'Enable masks: {args.enable_masks}')
+    print(f'Enable contours: {args.enable_contours}')
 
     for image_path in tqdm(
         image_paths,
@@ -922,9 +1167,16 @@ def process_images(args) -> None:
         image = Image.open(image_path).convert('RGB')
         orig_w, orig_h = image.size
         orig_target_sizes = torch.tensor([[orig_w, orig_h]], dtype=torch.float32)
-        image_tensor = transform(image).unsqueeze(0).to(device)
+        image_tensor = transform(image).unsqueeze(0)
+        if not use_onnx:
+            image_tensor = image_tensor.to(device)
 
-        results = model(image_tensor, orig_target_sizes)
+        results = model(
+            image_tensor,
+            orig_target_sizes,
+            return_masks=args.enable_masks,
+            return_contours=args.enable_contours,
+        )
         result = results[0]
 
         boxes = build_result_boxes(
@@ -946,6 +1198,13 @@ def process_images(args) -> None:
             boxes=boxes,
             mask_threshold=args.mask_threshold,
             mask_alpha=args.mask_alpha,
+            disable_render_classids=disable_render_classids,
+        )
+        rendered = overlay_body_contours(
+            image=rendered,
+            result=result,
+            boxes=boxes,
+            contour_threshold=args.mask_threshold,
             disable_render_classids=disable_render_classids,
         )
         rendered = draw_detections(
@@ -970,6 +1229,8 @@ def process_images(args) -> None:
                 boxes=boxes,
                 result=result,
                 mask_threshold=args.mask_threshold,
+                enable_masks=args.enable_masks,
+                enable_contours=args.enable_contours,
             )
             save_predictions_json(output_dir, image_path, records)
 
@@ -993,6 +1254,7 @@ def parse_args():
     parser.add_argument('-i', '--images_dir', type=str, required=True)
     parser.add_argument('-o', '--output_dir', type=str, required=True)
     parser.add_argument('-d', '--device', type=str, default=None)
+    parser.add_argument('--inference_type', type=str, choices=['fp16', 'int8'], default='fp16')
     parser.add_argument('--score_threshold', type=float, default=0.35)
     parser.add_argument('--object_score_threshold', '--object_socre_threshold', dest='object_score_threshold', type=float, default=None)
     parser.add_argument('--attribute_score_threshold', '--attribute_socre_threshold', dest='attribute_score_threshold', type=float, default=None)
@@ -1000,6 +1262,8 @@ def parse_args():
     parser.add_argument('--mask_threshold', type=float, default=0.5)
     parser.add_argument('--mask_alpha', type=check_alpha, default=128)
     parser.add_argument('--mask_resize_origin', type=str, choices=['topleft', 'center'], default='topleft')
+    parser.add_argument('--enable-masks', action='store_true')
+    parser.add_argument('--enable-contours', action='store_true')
     parser.add_argument('--keypoint_drawing_mode', type=str, choices=['dot', 'box', 'both'], default='dot')
     parser.add_argument('--enable_bone_drawing_mode', action='store_true')
     parser.add_argument('--disable_generation_identification_mode', action='store_true')

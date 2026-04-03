@@ -180,6 +180,62 @@ uv run onnxsim ${WEIGHT}_${QUERIES}query_n_batch.onnx ${WEIGHT}_${QUERIES}query.
 uv run python tools/deployment/make_prep.py -m ${WEIGHT}_${QUERIES}query.onnx -s 1 3 ${H} ${W}
 ```
 
+## `PostProcessor.k_max` for instance segmentation
+
+For `*_ins.yml` instance segmentation models, `PostProcessor.k_max` controls how many detections are allowed to enter the mask computation path during inference and ONNX export.
+
+- `k_max: 0` (default)
+  - Keeps the current sparse variable-length path.
+  - The exported ONNX graph uses `NonZero` to compact only the detections whose predicted class is included in `mask_target_class_ids`.
+  - This gives the smallest amount of mask computation when the actual number of target detections is very small.
+- `k_max: N` where `N >= 1`
+  - Switches inference and ONNX export to a fixed-length `TopK` path.
+  - Only the top `N` detections among `mask_target_class_ids` are used for mask computation.
+  - The exported ONNX graph removes `NonZero` and uses `TopK + Gather + ScatterElements` instead.
+  - This is intended for runtimes such as TensorRT where avoiding `NonZero` is preferable.
+
+Important points:
+
+- `k_max` affects only inference and ONNX export. It does not change the training loss path.
+- `k_max` is a limit for the mask computation path, not for bbox detection itself.
+- `label_xyxy_score` output shape does not change.
+- `masks` output shape does not change.
+- Detections that are not selected for mask computation are returned as zero masks.
+- If the actual number of target detections is less than or equal to `k_max`, the mask result should match the `k_max: 0` path apart from graph structure differences.
+- If the actual number of target detections is greater than `k_max`, only the highest-score `k_max` detections in `mask_target_class_ids` receive masks.
+
+Example config:
+
+```yaml
+PostProcessor:
+  num_top_queries: 800
+  k_max: 32
+```
+
+You can also override it only at export time without editing the YAML file:
+
+```bash
+uv run python tools/deployment/export_onnx.py \
+-c configs/deimv2/deimv2_dinov3_x_wholebody40_ins_s08.yml \
+-r ckpts/deimv2_dinov3_x_wholebody40_ins_s08.pth \
+--opset 17 \
+--with-masks \
+-u PostProcessor.k_max=32
+```
+
+For the command above:
+
+- `label_xyxy_score` remains `[B, 800, 6]`
+- `masks` remains `[B, 800, H, W]`
+- only up to `32` target detections go through the actual mask `einsum`
+- non-selected rows in `masks` are filled with zeros
+
+Recommended usage:
+
+- Use `k_max: 0` when you want the most faithful sparse path and your runtime tolerates `NonZero`.
+- Use `k_max: 16`, `32`, or `48` when you want a fixed-size ONNX graph for TensorRT-oriented deployment.
+- Set `k_max` large enough to cover the expected maximum number of target instances in one image. For example, if at most about 20 persons are expected, `k_max: 32` is a practical starting point.
+
 <img width="808" height="704" alt="image" src="https://github.com/user-attachments/assets/82606a50-c294-43f2-b617-a653a6ba5424" />
 
 ```bash

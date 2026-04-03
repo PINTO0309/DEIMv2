@@ -112,7 +112,8 @@ uv run python demo/wholebody40/demo_deimv2_torch_wholebody40_ins.py \
 --disable_generation_identification_mode \
 --disable_gender_identification_mode \
 --disable_headpose_identification_mode \
---disable_head_distance_measurement
+--disable_head_distance_measurement \
+--enable-masks
 ```
 
 - Runs inference on all `jpg/jpeg/png/bmp/webp` images in the input folder.
@@ -121,6 +122,35 @@ uv run python demo/wholebody40/demo_deimv2_torch_wholebody40_ins.py \
 - Body mask resize uses `center` origin by default. You can compare against the legacy behavior with `--mask_resize_origin topleft`.
 - If you specify `--disable_render_classids 0`, both the body bounding box and the body mask are hidden.
 - If you add `--save_raw_predictions`, the script saves `labels/scores/boxes` and body `mask_area/mask_bbox` to `predictions/*.json`.
+
+### ONNX model
+You can also pass an exported ONNX model to `-r/--resume`. In that case the same demo script switches to ONNX Runtime automatically.
+
+```bash
+uv run python demo/wholebody40/demo_deimv2_torch_wholebody40_ins.py \
+-c configs/deimv2/deimv2_dinov3_x_wholebody40_ins_s08.yml \
+-r deimv2_dinov3_x_wholebody40_ins_s08_800query_masks.onnx \
+-i images_partial \
+-o outputs/demo_wholebody40_onnx_ins_s08 \
+--enable-masks
+```
+
+### ONNX with TensorRT
+If `onnxruntime` was built with `TensorrtExecutionProvider`, you can enable TensorRT only for the ONNX path with `-d tensorrt`.
+
+```bash
+uv run python demo/wholebody40/demo_deimv2_torch_wholebody40_ins.py \
+-c configs/deimv2/deimv2_dinov3_x_wholebody40_ins_s08.yml \
+-r deimv2_dinov3_x_wholebody40_ins_s08_800query_masks.onnx \
+-i images_partial \
+-o outputs/demo_wholebody40_trt_ins_s08 \
+-d tensorrt \
+--enable-masks
+```
+
+- `-d tensorrt` is supported only when `-r/--resume` points to an `.onnx` file.
+- Supported values for `--inference_type` are `fp16` and `int8`.
+- The TensorRT engine cache is created next to the ONNX file on first run, so the first invocation can take longer.
 
 |Image|Image|
 |:-:|:-:|
