@@ -238,6 +238,8 @@ Recommended usage:
 - If you want extra safety for occasional crowd scenes, choose a slightly larger value such as `24` or `32`.
 - Larger `k_max` keeps more mask candidates but increases fixed mask-path cost. Smaller `k_max` is faster but may zero out masks for detections beyond that limit.
 
+## Inference sample
+
 <img width="808" height="704" alt="image" src="https://github.com/user-attachments/assets/82606a50-c294-43f2-b617-a653a6ba5424" />
 
 ```bash
