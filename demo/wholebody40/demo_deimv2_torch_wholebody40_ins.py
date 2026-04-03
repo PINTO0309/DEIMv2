@@ -440,10 +440,10 @@ def prepare_prediction_payload(
     enable_contours: bool,
 ) -> List[Dict[str, object]]:
     masks = result.get('masks') if enable_masks else None
-    if masks is not None:
+    if masks is not None and torch.is_tensor(masks):
         masks = masks.detach().cpu()
     contours = result.get('contours') if enable_contours else None
-    if contours is not None:
+    if contours is not None and torch.is_tensor(contours):
         contours = contours.detach().cpu()
 
     records: List[Dict[str, object]] = []
@@ -459,21 +459,52 @@ def prepare_prediction_payload(
         }
 
         if masks is not None and box.classid == BODY_CLASS_ID and box.source_idx >= 0:
-            binary_mask = masks[box.source_idx, 0].numpy() >= mask_threshold
-            mask_bbox = binary_mask_bbox(binary_mask)
-            if mask_bbox is not None:
-                record['mask_area'] = int(binary_mask.sum())
-                record['mask_bbox'] = mask_bbox
+            mask_probs = lookup_mask_probs(masks, box.source_idx)
+            if mask_probs is not None:
+                binary_mask = mask_probs >= mask_threshold
+                mask_bbox = binary_mask_bbox(binary_mask)
+                if mask_bbox is not None:
+                    record['mask_area'] = int(binary_mask.sum())
+                    record['mask_bbox'] = mask_bbox
 
         if contours is not None and box.classid == BODY_CLASS_ID and box.source_idx >= 0:
-            binary_contour = contours[box.source_idx, 0].numpy() >= mask_threshold
-            contour_bbox = binary_mask_bbox(binary_contour)
-            if contour_bbox is not None:
-                record['contour_area'] = int(binary_contour.sum())
-                record['contour_bbox'] = contour_bbox
+            contour_probs = lookup_mask_probs(contours, box.source_idx)
+            if contour_probs is not None:
+                binary_contour = contour_probs >= mask_threshold
+                contour_bbox = binary_mask_bbox(binary_contour)
+                if contour_bbox is not None:
+                    record['contour_area'] = int(binary_contour.sum())
+                    record['contour_bbox'] = contour_bbox
 
         records.append(record)
     return records
+
+
+def lookup_mask_probs(
+    mask_store: torch.Tensor | Dict[int, torch.Tensor] | None,
+    source_idx: int,
+) -> np.ndarray | None:
+    if mask_store is None or source_idx < 0:
+        return None
+
+    if isinstance(mask_store, dict):
+        mask_value = mask_store.get(source_idx)
+    else:
+        if source_idx >= len(mask_store):
+            return None
+        mask_value = mask_store[source_idx]
+
+    if mask_value is None:
+        return None
+
+    if torch.is_tensor(mask_value):
+        mask_array = mask_value.detach().cpu().numpy()
+    else:
+        mask_array = np.asarray(mask_value)
+
+    if mask_array.ndim == 3:
+        return mask_array[0]
+    return mask_array
 
 
 def overlay_body_masks(
@@ -488,14 +519,18 @@ def overlay_body_masks(
     if masks is None or BODY_CLASS_ID in disable_render_classids:
         return image
 
-    masks = masks.detach().cpu()
+    if torch.is_tensor(masks):
+        masks = masks.detach().cpu()
     overlay = np.zeros((image.height, image.width, 4), dtype=np.uint8)
     body_instance_idx = 0
 
     for box in boxes:
         if box.classid != BODY_CLASS_ID or box.source_idx < 0:
             continue
-        binary_mask = masks[box.source_idx, 0].numpy() >= mask_threshold
+        mask_probs = lookup_mask_probs(masks, box.source_idx)
+        if mask_probs is None:
+            continue
+        binary_mask = mask_probs >= mask_threshold
         if not binary_mask.any():
             continue
         instance_color = make_instance_color(body_instance_idx)
@@ -521,14 +556,18 @@ def overlay_body_contours(
     if contours is None or BODY_CLASS_ID in disable_render_classids:
         return image
 
-    contours = contours.detach().cpu()
+    if torch.is_tensor(contours):
+        contours = contours.detach().cpu()
     rendered = cv2.cvtColor(np.array(image), cv2.COLOR_RGB2BGR)
     body_instance_idx = 0
 
     for box in boxes:
         if box.classid != BODY_CLASS_ID or box.source_idx < 0:
             continue
-        binary_contour = (contours[box.source_idx, 0].numpy() >= contour_threshold).astype(np.uint8)
+        contour_probs = lookup_mask_probs(contours, box.source_idx)
+        if contour_probs is None:
+            continue
+        binary_contour = (contour_probs >= contour_threshold).astype(np.uint8)
         if not binary_contour.any():
             continue
 
@@ -1049,6 +1088,28 @@ class OnnxInferenceModel:
             resized_batches.append(batch_masks)
         return resized_batches
 
+    def _resize_selected_mask_map(
+        self,
+        masks: np.ndarray,
+        orig_target_size: torch.Tensor,
+        selected_indices: Sequence[int],
+    ) -> Dict[int, torch.Tensor]:
+        unique_indices = sorted({int(idx) for idx in selected_indices if idx >= 0})
+        if not unique_indices:
+            return {}
+
+        batch_masks = torch.from_numpy(masks[unique_indices]).to(dtype=torch.float32)
+        resized_masks = resize_masks(
+            batch_masks.unsqueeze(1),
+            size=tuple(int(v) for v in orig_target_size[[1, 0]].tolist()),
+            mode='bilinear',
+            origin=self.mask_resize_origin,
+        )
+        return {
+            source_idx: resized_masks[pos]
+            for pos, source_idx in enumerate(unique_indices)
+        }
+
     @torch.inference_mode()
     def __call__(
         self,
@@ -1061,8 +1122,13 @@ class OnnxInferenceModel:
         if 'orig_target_sizes' in self.input_names:
             input_feed['orig_target_sizes'] = orig_target_sizes.detach().cpu().numpy().astype(np.float32, copy=False)
 
-        output_values = self.session.run(self.output_names, input_feed)
-        outputs = dict(zip(self.output_names, output_values))
+        requested_outputs = ['label_xyxy_score']
+        if return_masks:
+            requested_outputs.append('masks')
+        if return_contours:
+            requested_outputs.append('contours')
+        output_values = self.session.run(requested_outputs, input_feed)
+        outputs = dict(zip(requested_outputs, output_values))
 
         if 'label_xyxy_score' not in outputs:
             raise KeyError('ONNX model output `label_xyxy_score` is required.')
@@ -1072,14 +1138,14 @@ class OnnxInferenceModel:
         if return_masks:
             if 'masks' not in outputs:
                 raise RuntimeError('ONNX model does not provide `masks`, but --enable-masks was requested.')
-            for result, masks in zip(results, self._resize_mask_batch(outputs['masks'], orig_target_sizes)):
-                result['masks'] = masks
+            for batch_idx, result in enumerate(results):
+                result['_onnx_masks'] = outputs['masks'][batch_idx]
 
         if return_contours:
             if 'contours' not in outputs:
                 raise RuntimeError('ONNX model does not provide `contours`, but --enable-contours was requested.')
-            for result, contours in zip(results, self._resize_mask_batch(outputs['contours'], orig_target_sizes)):
-                result['contours'] = contours
+            for batch_idx, result in enumerate(results):
+                result['_onnx_contours'] = outputs['contours'][batch_idx]
 
         return results
 
@@ -1191,6 +1257,24 @@ def process_images(args) -> None:
             disable_left_and_right_hand_identification_mode=args.disable_left_and_right_hand_identification_mode,
             disable_headpose_identification_mode=args.disable_headpose_identification_mode,
         )
+
+        body_source_indices = [box.source_idx for box in boxes if box.classid == BODY_CLASS_ID and box.source_idx >= 0]
+        if use_onnx and args.enable_masks:
+            raw_masks = result.pop('_onnx_masks', None)
+            if raw_masks is not None:
+                result['masks'] = model._resize_selected_mask_map(
+                    raw_masks,
+                    orig_target_sizes[0],
+                    body_source_indices,
+                )
+        if use_onnx and args.enable_contours:
+            raw_contours = result.pop('_onnx_contours', None)
+            if raw_contours is not None:
+                result['contours'] = model._resize_selected_mask_map(
+                    raw_contours,
+                    orig_target_sizes[0],
+                    body_source_indices,
+                )
 
         rendered = overlay_body_masks(
             image=image.copy(),
