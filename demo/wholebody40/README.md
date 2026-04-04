@@ -123,6 +123,34 @@ uv run python demo/wholebody40/demo_deimv2_torch_wholebody40_ins.py \
 - If you specify `--disable_render_classids 0`, both the body bounding box and the body mask are hidden.
 - If you add `--save_raw_predictions`, the script saves `labels/scores/boxes` and body `mask_area/mask_bbox` to `predictions/*.json`.
 
+### Mask head comparison configs
+For `wholebody40` instance segmentation, the following standalone configs are available for comparing `DEIMTransformer.mask_embed_head_hidden_dim` and `mask_embed_head_num_layers`.
+
+- `configs/deimv2/deimv2_dinov3_x_wholebody40_ins_s08_maskhead128x2.yml`
+- `configs/deimv2/deimv2_dinov3_x_wholebody40_ins_s08_maskhead192x2.yml`
+- `configs/deimv2/deimv2_dinov3_x_wholebody40_ins_s08_maskhead256x2.yml`
+- `configs/deimv2/deimv2_dinov3_x_wholebody40_ins_s08_maskhead256x3.yml`
+
+Example:
+
+```bash
+CUDA_VISIBLE_DEVICES=0 torchrun --master_port=7777 --nproc_per_node=1 train.py \
+-c configs/deimv2/deimv2_dinov3_x_wholebody40_ins_s08_maskhead192x2.yml \
+--use-amp --seed=0
+```
+
+Approximate mask-path cost comparison for `MLP(256, h, 256, L)` with `num_queries=800`, `mask_feature_level=0`, and `k_max=20`:
+
+|Config|`mask_embed_head` MACs|`mask einsum` MACs|Mask path total MACs|Relative total vs `128x2`|
+|:-:|--:|--:|--:|--:|
+|`128x2`|52,428,800|32,768,000|85,196,800|1.00x|
+|`192x2`|78,643,200|32,768,000|111,411,200|1.31x|
+|`256x2`|104,857,600|32,768,000|137,625,600|1.62x|
+|`256x3`|157,286,400|32,768,000|190,054,400|2.23x|
+
+- `k_max=20` reduces the fixed mask `einsum` path, but `mask_embed_head` is still evaluated for all queries.
+- If body mask quality is the priority, compare `128x2`, `192x2`, `256x2`, and `256x3` with the same training schedule before re-exporting ONNX.
+
 ### ONNX model
 You can also pass an exported ONNX model to `-r/--resume`. In that case the same demo script switches to ONNX Runtime automatically.
 
