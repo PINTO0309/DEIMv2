@@ -1344,7 +1344,7 @@ def parse_args():
     parser.add_argument('--attribute_score_threshold', '--attribute_socre_threshold', dest='attribute_score_threshold', type=float, default=None)
     parser.add_argument('--keypoint_threshold', type=float, default=None)
     parser.add_argument('--mask_threshold', type=float, default=0.5)
-    parser.add_argument('--mask_alpha', type=check_alpha, default=128)
+    parser.add_argument('--mask_alpha', type=check_alpha, default=160)
     parser.add_argument('--mask_resize_origin', type=str, choices=['topleft', 'center'], default='topleft')
     parser.add_argument('--enable-masks', action='store_true')
     parser.add_argument('--enable-contours', action='store_true')
