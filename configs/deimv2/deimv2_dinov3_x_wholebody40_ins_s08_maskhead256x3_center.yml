@@ -9,6 +9,11 @@ __include__: [
 
 output_dir: ./outputs/deimv2_dinov3_x_wholebody40_ins_center
 mask_target_class_ids: [0]
+center_eval_class_ids: [21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 35, 36, 37, 38]
+center_eval_thresholds: [0.25, 0.5, 1.0]
+center_eval_primary_threshold: 0.5
+center_eval_normalizer: half_diagonal
+center_eval_score_threshold: 0.0
 
 DEIM:
   backbone: DINOv3STAs

@@ -282,6 +282,10 @@ def test_yaml_configs_keep_existing_config_unchanged_and_add_new_center_config()
     assert getattr(new_criterion, 'center_target_class_ids') == CENTER_CLASS_IDS
     assert new_criterion.weight_dict['loss_center'] == pytest.approx(3.0)
     assert new_criterion.matcher.center_target_class_ids == set(CENTER_CLASS_IDS)
+    assert old_cfg.yaml_cfg.get('center_eval_class_ids') is None
+    assert new_cfg.yaml_cfg.get('center_eval_class_ids') == CENTER_CLASS_IDS
+    assert new_cfg.yaml_cfg.get('center_eval_thresholds') == [0.25, 0.5, 1.0]
+    assert new_cfg.yaml_cfg.get('center_eval_primary_threshold') == pytest.approx(0.5)
 
 
 def test_loading_old_extra_state_keeps_current_center_defaults():

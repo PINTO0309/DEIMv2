@@ -186,5 +186,9 @@ def evaluate(model: torch.nn.Module, criterion: torch.nn.Module, postprocessor, 
             stats['coco_eval_bbox'] = coco_evaluator.coco_eval['bbox'].stats.tolist()
         if 'segm' in iou_types:
             stats['coco_eval_masks'] = coco_evaluator.coco_eval['segm'].stats.tolist()
+        center_summary = getattr(coco_evaluator, 'center_eval', {}).get('summary', {})
+        if center_summary:
+            for key, value in center_summary.items():
+                stats[f'center_eval_{key.replace("@", "_at_").replace(".", "_")}'] = value
 
     return stats, coco_evaluator

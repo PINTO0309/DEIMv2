@@ -138,8 +138,12 @@ class DetSolver(BaseSolver):
 
             for k in test_stats:
                 if self.writer and dist_utils.is_main_process():
-                    for i, v in enumerate(test_stats[k]):
-                        self.writer.add_scalar(f'Test/{k}_{i}'.format(k), v, epoch)
+                    value = test_stats[k]
+                    if isinstance(value, (list, tuple)):
+                        for i, v in enumerate(value):
+                            self.writer.add_scalar(f'Test/{k}_{i}'.format(k), v, epoch)
+                    else:
+                        self.writer.add_scalar(f'Test/{k}'.format(k), value, epoch)
 
             primary_metric_key = self._get_primary_metric_key(test_stats)
             improved = False
@@ -213,6 +217,8 @@ class DetSolver(BaseSolver):
 
         if self.output_dir:
             eval_state = {iou_type: coco_eval.eval for iou_type, coco_eval in coco_evaluator.coco_eval.items()}
+            if getattr(coco_evaluator, 'center_eval', None):
+                eval_state['center_eval'] = coco_evaluator.center_eval
             dist_utils.save_on_master(eval_state, self.output_dir / "eval.pth")
 
         return
@@ -436,3 +442,54 @@ class DetSolver(BaseSolver):
                     class_names = self._resolve_class_names()
                     title = "Per-class mAP:" if metrics else "Per-class mAP (inference):"
                     self._print_map_per_class_table(per_class, class_names, title)
+
+        self._report_center_validation(coco_evaluator, epoch_value)
+
+    def _report_center_validation(self, coco_evaluator, epoch):
+        center_eval = getattr(coco_evaluator, 'center_eval', None)
+        if not center_eval:
+            return
+
+        summary = center_eval.get('summary', {})
+        if not summary:
+            return
+
+        primary_threshold = center_eval.get('primary_threshold', 0.5)
+        suffix = f'@{primary_threshold:g}'
+        lines = [
+            'Center-point metrics:',
+            (
+                f"epoch={epoch} "
+                f"F1{suffix}={summary.get(f'f1{suffix}', float('nan')):.4f} "
+                f"Precision{suffix}={summary.get(f'precision{suffix}', float('nan')):.4f} "
+                f"Recall{suffix}={summary.get(f'recall{suffix}', float('nan')):.4f} "
+                f"median_distance={summary.get('median_distance', float('nan')):.4f} "
+                f"mean_distance={summary.get('mean_distance', float('nan')):.4f} "
+                f"matched={summary.get('matched_count', 0)} "
+                f"gt={summary.get('gt_count', 0)} "
+                f"pred={summary.get('pred_count', 0)}"
+            ),
+        ]
+        print("\n".join(lines))
+
+        per_class = center_eval.get('per_class', {})
+        if not per_class:
+            return
+
+        class_names = self._resolve_class_names()
+        print('Per-class center-point metrics:')
+        print(' ID│Name                     │F1    │P     │R     │MedD ')
+        print('───┼─────────────────────────┼──────┼──────┼──────┼──────')
+        for class_id in center_eval.get('class_ids', []):
+            metrics = per_class.get(class_id)
+            if metrics is None:
+                continue
+            name = class_names[class_id] if class_id < len(class_names) else str(class_id)
+            print(
+                f"{str(class_id).rjust(3)}│"
+                f"{name[:24].ljust(24)}│"
+                f"{metrics.get(f'f1{suffix}', float('nan')):0.4f}│"
+                f"{metrics.get(f'precision{suffix}', float('nan')):0.4f}│"
+                f"{metrics.get(f'recall{suffix}', float('nan')):0.4f}│"
+                f"{metrics.get('median_distance', float('nan')):0.4f}"
+            )
