@@ -1,0 +1,148 @@
+__include__: [
+  '../dataset/wholebody40_instance.yml',
+  '../runtime.yml',
+  '../base/dataloader.yml',
+  '../base/optimizer.yml',
+  '../base/deimv2.yml',
+]
+
+
+output_dir: ./outputs/deimv2_dinov3_x_wholebody40_ins_center
+mask_target_class_ids: [0]
+
+DEIM:
+  backbone: DINOv3STAs
+
+DINOv3STAs:
+  name: dinov3_vits16plus
+  weights_path: ./ckpts/dinov3_vits16plus_pretrain_lvd1689m-4057cbaa.pth
+  interaction_indexes: [5,8,11]
+  finetune: True
+  conv_inplane: 64
+  hidden_dim: 256
+
+HybridEncoder:
+  in_channels: [256, 256, 256]
+  hidden_dim: 256
+  dim_feedforward: 1024
+  expansion: 1.25
+  depth_mult: 1.37
+
+DEIMTransformer:
+  num_layers: 6
+  eval_idx: -1
+  num_queries: 800
+  feat_channels: [256, 256, 256]
+  hidden_dim: 256
+  dim_feedforward: 2048
+  mask_feature_level: 0 # 0=stride8, 1=stride16, 2=stride32
+  mask_compute_mode: lazy
+  mask_embed_head_hidden_dim: 256
+  mask_embed_head_num_layers: 3
+  use_contour_aux_head: True
+  use_distance_aux_head: True
+  aux_mask_feature_level: 0 # 0=stride8, 1=stride16, 2=stride32
+
+PostProcessor:
+  num_top_queries: 800
+  k_max: 0
+
+epoches: 58
+
+optimizer:
+  type: AdamW
+  params:
+    -
+      params: '^(?=.*.dinov3)(?!.*(?:norm|bn|bias)).*$'
+      lr: 0.00001
+    -
+      params: '^(?=.*.dinov3)(?=.*(?:norm|bn|bias)).*$'
+      lr: 0.00001
+      weight_decay: 0.
+    -
+      params: '^(?=.*(?:sta|encoder|decoder))(?=.*(?:norm|bn|bias)).*$'
+      weight_decay: 0.
+
+  lr: 0.0000625
+  betas: [0.9, 0.999]
+  weight_decay: 0.00003125
+
+train_dataloader:
+  dataset:
+    transforms:
+      ops:
+        - {type: RandomPhotometricDistort, p: 0.5}
+        - {type: RandomZoomOut, p: 0.5, fill: 0, side_range: [1.0, 1.5]}
+        - {type: RandomIoUCrop, p: 0.8}
+        - {type: SanitizeBoundingBoxes, min_size: 1}
+        - {type: RandomHorizontalFlipWithClass, class_pairs: [[9, 15], [10, 14], [11, 13], [23, 24], [27, 28], [30, 31], [33, 34]]}
+        - {type: Resize, size: [640, 640]}
+        - {type: SanitizeBoundingBoxes, min_size: 1}
+        - {type: ConvertPILImage, dtype: 'float32', scale: True}
+        - {type: Normalize, mean: [0.485, 0.456, 0.406], std: [0.229, 0.224, 0.225]}
+        - {type: ConvertBoxes, fmt: 'cxcywh', normalize: True}
+      policy:
+        epoch: [4, 29, 50]
+        ops: ['RandomPhotometricDistort', 'RandomZoomOut', 'RandomIoUCrop']
+      mosaic_prob: -0.1
+  total_batch_size: 2
+  num_workers: 4
+
+  collate_fn:
+    mixup_prob: 0.0
+    mixup_epochs: [4, 29]
+    stop_epoch: 50
+    copyblend_prob: 0.0
+    copyblend_epochs: [4, 50]
+    base_size_repeat: 3
+
+val_dataloader:
+  dataset:
+    transforms:
+      ops:
+        - {type: Resize, size: [640, 640]}
+        - {type: ConvertPILImage, dtype: 'float32', scale: True}
+        - {type: Normalize, mean: [0.485, 0.456, 0.406], std: [0.229, 0.224, 0.225]}
+  total_batch_size: 2
+  num_workers: 4
+
+DEIMCriterion:
+  weight_dict:
+    loss_mal: 1
+    loss_bbox: 5
+    loss_giou: 2
+    loss_fgl: 0.15
+    loss_ddf: 1.5
+    loss_center: 3.0
+    loss_mask_bce: 5
+    loss_mask_dice: 5
+    loss_mask_boundary: 1.0
+    loss_mask_contour: 0.5
+    loss_mask_distance: 0.25
+  losses: ['mal', 'boxes', 'local', 'masks']
+  gamma: 1.5
+  alpha: 0.75
+  reg_max: 32
+  use_boundary_aware_loss: True
+  boundary_aware_width: 3
+  boundary_aware_weight: 2.0
+  use_contour_detection: True
+  use_distance_transform: True
+  distance_transform_steps: 5
+  center_target_class_ids: [21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 35, 36, 37, 38]
+  center_distance_min_radius: 0.02
+  center_bbox_wh_weight: 0.25
+  center_giou_weight: 0.25
+  center_local_weight: 0.0
+
+  matcher:
+    type: HungarianMatcher
+    weight_dict: {cost_class: 2, cost_bbox: 5, cost_giou: 2}
+    alpha: 0.25
+    gamma: 2.0
+    change_matcher: True
+    iou_order_alpha: 4.0
+    matcher_change_epoch: 45
+    center_target_class_ids: [21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 35, 36, 37, 38]
+    center_distance_min_radius: 0.02
+    center_match_wh_cost_weight: 0.25

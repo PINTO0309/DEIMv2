@@ -49,6 +49,11 @@ class DEIMCriterion(nn.Module):
         use_contour_detection=False,
         use_distance_transform=False,
         distance_transform_steps=5,
+        center_target_class_ids=None,
+        center_distance_min_radius=0.02,
+        center_bbox_wh_weight=1.0,
+        center_giou_weight=1.0,
+        center_local_weight=1.0,
         ):
         """Create the criterion.
         Parameters:
@@ -85,6 +90,11 @@ class DEIMCriterion(nn.Module):
         self.use_contour_detection = use_contour_detection
         self.use_distance_transform = use_distance_transform
         self.distance_transform_steps = distance_transform_steps
+        self.center_target_class_ids = [] if center_target_class_ids is None else [int(x) for x in center_target_class_ids]
+        self.center_distance_min_radius = float(center_distance_min_radius)
+        self.center_bbox_wh_weight = float(center_bbox_wh_weight)
+        self.center_giou_weight = float(center_giou_weight)
+        self.center_local_weight = float(center_local_weight)
 
     def get_extra_state(self):
         return {
@@ -107,6 +117,11 @@ class DEIMCriterion(nn.Module):
             'use_contour_detection': self.use_contour_detection,
             'use_distance_transform': self.use_distance_transform,
             'distance_transform_steps': self.distance_transform_steps,
+            'center_target_class_ids': copy.deepcopy(self.center_target_class_ids),
+            'center_distance_min_radius': self.center_distance_min_radius,
+            'center_bbox_wh_weight': self.center_bbox_wh_weight,
+            'center_giou_weight': self.center_giou_weight,
+            'center_local_weight': self.center_local_weight,
         }
 
     def set_extra_state(self, state):
@@ -131,6 +146,37 @@ class DEIMCriterion(nn.Module):
         self.use_contour_detection = state.get('use_contour_detection', self.use_contour_detection)
         self.use_distance_transform = state.get('use_distance_transform', self.use_distance_transform)
         self.distance_transform_steps = state.get('distance_transform_steps', self.distance_transform_steps)
+        self.center_target_class_ids = copy.deepcopy(state.get('center_target_class_ids', self.center_target_class_ids))
+        self.center_distance_min_radius = state.get('center_distance_min_radius', self.center_distance_min_radius)
+        self.center_bbox_wh_weight = state.get('center_bbox_wh_weight', self.center_bbox_wh_weight)
+        self.center_giou_weight = state.get('center_giou_weight', self.center_giou_weight)
+        self.center_local_weight = state.get('center_local_weight', self.center_local_weight)
+
+    def _matched_target_labels(self, targets, indices, device):
+        labels = [t['labels'][j] for t, (_, j) in zip(targets, indices) if len(j) > 0]
+        if labels:
+            return torch.cat(labels, dim=0)
+        return torch.zeros((0,), dtype=torch.int64, device=device)
+
+    def _build_center_target_mask(self, labels: torch.Tensor) -> torch.Tensor:
+        if not self.center_target_class_ids or labels.numel() == 0:
+            return torch.zeros_like(labels, dtype=torch.bool)
+
+        mask = torch.zeros_like(labels, dtype=torch.bool)
+        for class_id in self.center_target_class_ids:
+            mask |= labels == int(class_id)
+        return mask
+
+    def _normalized_center_distance(self, src_boxes: torch.Tensor, target_boxes: torch.Tensor) -> torch.Tensor:
+        if src_boxes.numel() == 0:
+            return src_boxes.new_zeros((0,))
+        center_distance = torch.norm(src_boxes[:, :2] - target_boxes[:, :2], dim=-1)
+        target_radius = 0.5 * torch.norm(target_boxes[:, 2:], dim=-1)
+        target_radius = torch.clamp(target_radius, min=self.center_distance_min_radius)
+        return center_distance / target_radius
+
+    def _center_quality(self, src_boxes: torch.Tensor, target_boxes: torch.Tensor) -> torch.Tensor:
+        return (1.0 - self._normalized_center_distance(src_boxes, target_boxes)).clamp(min=0.0, max=1.0)
 
     def loss_labels_focal(self, outputs, targets, indices, num_boxes):
         assert 'pred_logits' in outputs
@@ -181,8 +227,16 @@ class DEIMCriterion(nn.Module):
         if values is None:
             src_boxes = outputs['pred_boxes'][idx]
             target_boxes = torch.cat([t['boxes'][i] for t, (_, i) in zip(targets, indices)], dim=0)
-            ious, _ = box_iou(box_cxcywh_to_xyxy(src_boxes), box_cxcywh_to_xyxy(target_boxes))
-            ious = torch.diag(ious).detach()
+            labels = self._matched_target_labels(targets, indices, src_boxes.device)
+            if self.center_target_class_ids:
+                ious = self._center_quality(src_boxes, target_boxes).detach()
+                center_target_mask = self._build_center_target_mask(labels)
+                if (~center_target_mask).any():
+                    box_ious, _ = box_iou(box_cxcywh_to_xyxy(src_boxes), box_cxcywh_to_xyxy(target_boxes))
+                    ious[~center_target_mask] = torch.diag(box_ious).detach()[~center_target_mask]
+            else:
+                ious, _ = box_iou(box_cxcywh_to_xyxy(src_boxes), box_cxcywh_to_xyxy(target_boxes))
+                ious = torch.diag(ious).detach()
         else:
             ious = values
 
@@ -218,14 +272,27 @@ class DEIMCriterion(nn.Module):
         idx = self._get_src_permutation_idx(indices)
         src_boxes = outputs['pred_boxes'][idx]
         target_boxes = torch.cat([t['boxes'][i] for t, (_, i) in zip(targets, indices)], dim=0)
+        target_labels = self._matched_target_labels(targets, indices, src_boxes.device)
+        center_target_mask = self._build_center_target_mask(target_labels)
         losses = {}
         loss_bbox = F.l1_loss(src_boxes, target_boxes, reduction='none')
+        if center_target_mask.any():
+            loss_bbox = loss_bbox.clone()
+            loss_bbox[center_target_mask, :2] = 0.0
+            loss_bbox[center_target_mask, 2:] *= self.center_bbox_wh_weight
         losses['loss_bbox'] = loss_bbox.sum() / num_boxes
 
         loss_giou = 1 - torch.diag(generalized_box_iou(\
             box_cxcywh_to_xyxy(src_boxes), box_cxcywh_to_xyxy(target_boxes)))
+        if center_target_mask.any():
+            loss_giou = loss_giou.clone()
+            loss_giou[center_target_mask] *= self.center_giou_weight
         loss_giou = loss_giou if boxes_weight is None else loss_giou * boxes_weight
         losses['loss_giou'] = loss_giou.sum() / num_boxes
+
+        if center_target_mask.any():
+            loss_center = self._normalized_center_distance(src_boxes, target_boxes)
+            losses['loss_center'] = loss_center[center_target_mask].sum() / num_boxes
 
         return losses
 
@@ -237,6 +304,8 @@ class DEIMCriterion(nn.Module):
         if 'pred_corners' in outputs:
             idx = self._get_src_permutation_idx(indices)
             target_boxes = torch.cat([t['boxes'][i] for t, (_, i) in zip(targets, indices)], dim=0)
+            target_labels = self._matched_target_labels(targets, indices, target_boxes.device)
+            center_target_mask = self._build_center_target_mask(target_labels)
 
             pred_corners = outputs['pred_corners'][idx].reshape(-1, (self.reg_max+1))
             ref_points = outputs['ref_points'][idx].detach()
@@ -253,6 +322,10 @@ class DEIMCriterion(nn.Module):
             ious = torch.diag(box_iou(\
                         box_cxcywh_to_xyxy(outputs['pred_boxes'][idx]), box_cxcywh_to_xyxy(target_boxes))[0])
             weight_targets = ious.unsqueeze(-1).repeat(1, 1, 4).reshape(-1).detach()
+            if center_target_mask.any():
+                center_scale = torch.ones_like(ious)
+                center_scale[center_target_mask] = self.center_local_weight
+                weight_targets = weight_targets * center_scale.unsqueeze(-1).repeat(1, 1, 4).reshape(-1)
 
             losses['loss_fgl'] = self.unimodal_distribution_focal_loss(
                 pred_corners, target_corners, weight_right, weight_left, weight_targets, avg_factor=num_boxes)
@@ -268,6 +341,10 @@ class DEIMCriterion(nn.Module):
                     mask = mask.unsqueeze(-1).repeat(1, 1, 4).reshape(-1)
 
                     weight_targets_local[idx] = ious.reshape_as(weight_targets_local[idx]).to(weight_targets_local.dtype)
+                    if center_target_mask.any():
+                        center_scale = torch.ones_like(ious)
+                        center_scale[center_target_mask] = self.center_local_weight
+                        weight_targets_local[idx] = weight_targets_local[idx] * center_scale.to(weight_targets_local.dtype)
                     weight_targets_local = weight_targets_local.unsqueeze(-1).repeat(1, 1, 4).reshape(-1).detach()
 
                     loss_match_local = weight_targets_local * (T ** 2) * (nn.KLDivLoss(reduction='none')
