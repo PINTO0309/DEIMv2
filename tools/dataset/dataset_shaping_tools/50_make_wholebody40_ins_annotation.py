@@ -1,15 +1,20 @@
 import argparse
 import copy
 import json
-import math
 import re
 from collections import defaultdict
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
+import cv2
 import numpy as np
 from scipy.optimize import linear_sum_assignment
 from tqdm import tqdm
+
+try:
+    from pycocotools import mask as mask_utils
+except Exception:  # pragma: no cover - optional dependency
+    mask_utils = None
 
 
 BODY_CATEGORY_ID = 0
@@ -28,6 +33,12 @@ def parse_args():
         '--val-json',
         type=Path,
         default=Path('/media/b920405/ExtremeSSD/make_wholebody40/val.json'),
+    )
+    parser.add_argument(
+        '--src-donor-json',
+        type=Path,
+        default=None,
+        help='Single donor COCO JSON. When set, legacy src-train/src-val inputs are ignored.',
     )
     parser.add_argument(
         '--src-train-json',
@@ -55,6 +66,11 @@ def parse_args():
         default=Path('/media/b920405/ExtremeSSD/make_wholebody40/val_ins.json'),
     )
     parser.add_argument(
+        '--output-mask-format',
+        choices=['rle', 'polygon'],
+        default='rle',
+    )
+    parser.add_argument(
         '--match-iou-threshold',
         type=float,
         default=0.70,
@@ -65,6 +81,11 @@ def parse_args():
         default=Path('/media/b920405/ExtremeSSD/make_wholebody40/merge_person_masks_report.json'),
     )
     return parser.parse_args()
+
+
+def require_mask_utils(context: str) -> None:
+    if mask_utils is None:
+        raise RuntimeError(f'pycocotools is required for {context}.')
 
 
 def load_json(path: Path) -> dict:
@@ -175,29 +196,85 @@ def scale_bbox(box: List[float], scale_x: float, scale_y: float) -> List[float]:
     ]
 
 
-def scale_polygon(segmentation: List[List[float]], scale_x: float, scale_y: float) -> Optional[List[List[float]]]:
-    scaled = []
+def resize_mask(mask: np.ndarray, target_width: int, target_height: int) -> np.ndarray:
+    if mask.shape[1] == target_width and mask.shape[0] == target_height:
+        return mask.astype(np.uint8)
+    resized = cv2.resize(mask.astype(np.uint8), (int(target_width), int(target_height)), interpolation=cv2.INTER_NEAREST)
+    return resized.astype(np.uint8)
+
+
+def segmentation_kind(segmentation) -> str:
+    if isinstance(segmentation, list):
+        return 'polygon'
+    if isinstance(segmentation, dict):
+        return 'rle'
+    return 'invalid'
+
+
+def decode_rle_mask(segmentation: dict) -> np.ndarray:
+    require_mask_utils('RLE donor segmentations')
+    decoded = mask_utils.decode(segmentation)
+    if decoded.ndim == 3:
+        decoded = decoded[:, :, 0]
+    return (decoded > 0).astype(np.uint8)
+
+
+def polygon_to_mask(segmentation: List[List[float]], width: int, height: int) -> Optional[np.ndarray]:
+    mask = np.zeros((int(height), int(width)), dtype=np.uint8)
+    valid_polygon_count = 0
     for polygon in segmentation:
         if not isinstance(polygon, list) or len(polygon) < 6 or len(polygon) % 2 != 0:
             return None
-        coords = []
-        for idx, value in enumerate(polygon):
-            coords.append(float(value * scale_x) if idx % 2 == 0 else float(value * scale_y))
-        scaled.append(coords)
-    return scaled if scaled else None
+        pts = np.asarray(polygon, dtype=np.float32).reshape(-1, 2)
+        if pts.shape[0] < 3:
+            return None
+        pts = np.round(pts).astype(np.int32)
+        cv2.fillPoly(mask, [pts], 1)
+        valid_polygon_count += 1
+    return mask if valid_polygon_count > 0 else None
 
 
-def polygon_area(polygon: List[float]) -> float:
-    points = np.asarray(polygon, dtype=np.float64).reshape(-1, 2)
-    if len(points) < 3:
-        return 0.0
-    x = points[:, 0]
-    y = points[:, 1]
-    return float(abs(np.dot(x, np.roll(y, -1)) - np.dot(y, np.roll(x, -1))) * 0.5)
+def segmentation_to_mask(segmentation, width: int, height: int) -> Optional[np.ndarray]:
+    kind = segmentation_kind(segmentation)
+    if kind == 'polygon':
+        return polygon_to_mask(segmentation, width, height)
+    if kind == 'rle':
+        return decode_rle_mask(segmentation)
+    return None
 
 
-def segmentation_area(segmentation: List[List[float]]) -> float:
-    return float(sum(polygon_area(polygon) for polygon in segmentation))
+def encode_compressed_rle(mask: np.ndarray) -> dict:
+    require_mask_utils('RLE output')
+    encoded = mask_utils.encode(np.asfortranarray(mask.astype(np.uint8)))
+    counts = encoded['counts']
+    if isinstance(counts, bytes):
+        encoded['counts'] = counts.decode('utf-8')
+    return encoded
+
+
+def mask_to_polygons(mask: np.ndarray) -> List[List[float]]:
+    contours, _ = cv2.findContours(mask.astype(np.uint8), cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    polygons: List[List[float]] = []
+    for contour in contours:
+        if contour.shape[0] < 3:
+            continue
+        points = contour[:, 0, :].astype(np.float32)
+        polygon = points.reshape(-1).tolist()
+        if len(polygon) >= 6:
+            polygons.append([float(v) for v in polygon])
+    return polygons
+
+
+def serialize_mask(mask: np.ndarray, output_mask_format: str):
+    if output_mask_format == 'rle':
+        return encode_compressed_rle(mask)
+    if output_mask_format == 'polygon':
+        return mask_to_polygons(mask)
+    raise ValueError(f'Unsupported output_mask_format: {output_mask_format}')
+
+
+def mask_area(mask: np.ndarray) -> float:
+    return float(mask.astype(np.uint8).sum())
 
 
 def default_split_report(split_name: str) -> dict:
@@ -216,6 +293,7 @@ def default_split_report(split_name: str) -> dict:
         'invalid_donor_segmentations': 0,
         'low_iou_rejections': 0,
         'area_recomputed': 0,
+        'donor_segmentation_type_counts': {'polygon': 0, 'rle': 0, 'invalid': 0},
         'matched_iou_values': [],
         'rejection_examples': [],
         'missing_image_examples': [],
@@ -229,26 +307,40 @@ def append_example(report: dict, key: str, example: dict, limit: int = 20) -> No
 
 def prepare_donor_annotations(
     donor_annotations: List[dict],
-    scale_x: float,
-    scale_y: float,
+    donor_image: dict,
+    target_image: dict,
     report: dict,
 ) -> List[dict]:
     prepared = []
+    scale_x = target_image['width'] / donor_image['width']
+    scale_y = target_image['height'] / donor_image['height']
+    donor_width = int(donor_image['width'])
+    donor_height = int(donor_image['height'])
+    target_width = int(target_image['width'])
+    target_height = int(target_image['height'])
+
     for donor_ann in donor_annotations:
         if donor_ann.get('category_id') != DONOR_PERSON_CATEGORY_ID:
             continue
+
         segmentation = donor_ann.get('segmentation')
-        if not isinstance(segmentation, list):
+        kind = segmentation_kind(segmentation)
+        report['donor_segmentation_type_counts'][kind] += 1
+
+        mask = segmentation_to_mask(segmentation, donor_width, donor_height)
+        if mask is None:
             report['invalid_donor_segmentations'] += 1
             continue
-        scaled_segmentation = scale_polygon(segmentation, scale_x, scale_y)
-        if not scaled_segmentation:
+
+        target_mask = resize_mask(mask, target_width, target_height)
+        if int(target_mask.sum()) <= 0:
             report['invalid_donor_segmentations'] += 1
             continue
+
         prepared.append({
             'annotation': donor_ann,
             'bbox': scale_bbox(donor_ann['bbox'], scale_x, scale_y),
-            'segmentation': scaled_segmentation,
+            'mask': target_mask,
         })
     return prepared
 
@@ -264,6 +356,7 @@ def process_split(
     donor_images_by_key: Dict[str, dict],
     donor_annotations_by_image: Dict[int, List[dict]],
     match_iou_threshold: float,
+    output_mask_format: str,
 ) -> Tuple[dict, dict]:
     output = copy.deepcopy(target_data)
     report = default_split_report(split_name)
@@ -309,9 +402,7 @@ def process_split(
 
         report['images_with_donor'] += 1
         donor_annotations = donor_annotations_by_image.get(donor_image['id'], [])
-        scale_x = image['width'] / donor_image['width']
-        scale_y = image['height'] / donor_image['height']
-        prepared_donors = prepare_donor_annotations(donor_annotations, scale_x, scale_y, report)
+        prepared_donors = prepare_donor_annotations(donor_annotations, donor_image, image, report)
 
         if len(body_indices) > len(prepared_donors):
             report['images_body_gt_more_than_donor'] += 1
@@ -355,8 +446,9 @@ def process_split(
                 matched_body_rows.add(row)
                 continue
 
-            target_ann['segmentation'] = prepared_donors[col]['segmentation']
-            target_ann['area'] = segmentation_area(prepared_donors[col]['segmentation'])
+            donor_mask = prepared_donors[col]['mask']
+            target_ann['segmentation'] = serialize_mask(donor_mask, output_mask_format)
+            target_ann['area'] = mask_area(donor_mask)
             report['matched_body_annotations'] += 1
             report['area_recomputed'] += 1
             report['matched_iou_values'].append(iou_value)
@@ -394,19 +486,27 @@ def finalize_report(report: dict) -> dict:
     return report
 
 
+def resolve_donor_data(args) -> Tuple[dict, str, Optional[Path]]:
+    if args.src_donor_json is not None:
+        donor_data = load_json(args.src_donor_json)
+        return donor_data, 'single_json', args.src_donor_json
+
+    donor_train_data = load_json(args.src_train_json)
+    donor_val_data = load_json(args.src_val_json)
+    combined_donor = create_combined_donor(donor_train_data, donor_val_data)
+    save_json(args.src_trainval_json, combined_donor)
+    return combined_donor, 'legacy_merge', args.src_trainval_json
+
+
 def main():
     args = parse_args()
 
     train_data = load_json(args.train_json)
     val_data = load_json(args.val_json)
-    donor_train_data = load_json(args.src_train_json)
-    donor_val_data = load_json(args.src_val_json)
+    donor_data, donor_mode, donor_path = resolve_donor_data(args)
 
-    combined_donor = create_combined_donor(donor_train_data, donor_val_data)
-    save_json(args.src_trainval_json, combined_donor)
-
-    donor_images_by_id, donor_images_by_key = build_image_maps(combined_donor)
-    donor_annotations_by_image = group_annotations_by_image(combined_donor)
+    donor_images_by_id, donor_images_by_key = build_image_maps(donor_data)
+    donor_annotations_by_image = group_annotations_by_image(donor_data)
     _ = donor_images_by_id  # kept for symmetry with other maps
 
     train_output, train_report = process_split(
@@ -415,6 +515,7 @@ def main():
         donor_images_by_key=donor_images_by_key,
         donor_annotations_by_image=donor_annotations_by_image,
         match_iou_threshold=args.match_iou_threshold,
+        output_mask_format=args.output_mask_format,
     )
     val_output, val_report = process_split(
         split_name='val',
@@ -422,6 +523,7 @@ def main():
         donor_images_by_key=donor_images_by_key,
         donor_annotations_by_image=donor_annotations_by_image,
         match_iou_threshold=args.match_iou_threshold,
+        output_mask_format=args.output_mask_format,
     )
 
     save_json(args.train_out, train_output)
@@ -431,24 +533,33 @@ def main():
         'paths': {
             'train_json': str(args.train_json),
             'val_json': str(args.val_json),
+            'src_donor_json': str(args.src_donor_json) if args.src_donor_json is not None else None,
             'src_train_json': str(args.src_train_json),
             'src_val_json': str(args.src_val_json),
             'src_trainval_json': str(args.src_trainval_json),
+            'resolved_donor_json': str(donor_path) if donor_path is not None else None,
             'train_out': str(args.train_out),
             'val_out': str(args.val_out),
         },
+        'donor_mode': donor_mode,
+        'output_mask_format': args.output_mask_format,
+        'legacy_inputs_used': donor_mode == 'legacy_merge',
+        'legacy_inputs_ignored': donor_mode == 'single_json',
         'match_iou_threshold': args.match_iou_threshold,
         'combined_donor': {
-            'images_total': len(combined_donor.get('images', [])),
-            'annotations_total': len(combined_donor.get('annotations', [])),
-            'categories_total': len(combined_donor.get('categories', [])),
+            'images_total': len(donor_data.get('images', [])),
+            'annotations_total': len(donor_data.get('annotations', [])),
+            'categories_total': len(donor_data.get('categories', [])),
         },
         'train': finalize_report(train_report),
         'val': finalize_report(val_report),
     }
     save_json(args.report_json, report)
 
-    print('Saved combined donor to:', args.src_trainval_json)
+    if donor_mode == 'legacy_merge':
+        print('Saved combined donor to:', args.src_trainval_json)
+    else:
+        print('Using donor JSON:', donor_path)
     print('Saved train output to:', args.train_out)
     print('Saved val output to:', args.val_out)
     print('Saved report to:', args.report_json)

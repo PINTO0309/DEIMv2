@@ -3,6 +3,7 @@ Render a small visual preview set from wholebody40 instance segmentation annotat
 """
 
 import argparse
+import colorsys
 import json
 import random
 from collections import defaultdict
@@ -10,8 +11,13 @@ from pathlib import Path
 from typing import Dict, List, Tuple
 
 import numpy as np
-from PIL import Image, ImageColor, ImageDraw, ImageFont
+from PIL import Image, ImageDraw, ImageFont
 from tqdm import tqdm
+
+try:
+    from pycocotools import mask as mask_utils
+except Exception:  # pragma: no cover - optional dependency
+    mask_utils = None
 
 
 DEFAULT_ANN_JSON = '/media/b920405/ExtremeSSD/make_wholebody40/wholebody40/annotations/val_ins.json'
@@ -40,6 +46,11 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
+def require_mask_utils(context: str) -> None:
+    if mask_utils is None:
+        raise RuntimeError(f'pycocotools is required for {context}.')
+
+
 def load_annotation(annotation_path: Path) -> dict:
     with annotation_path.open('r', encoding='utf-8') as f:
         return json.load(f)
@@ -49,17 +60,21 @@ def make_category_lookup(categories: List[dict]) -> Dict[int, str]:
     return {int(cat['id']): str(cat.get('name', cat['id'])) for cat in categories}
 
 
-def make_category_colors(category_ids: List[int]) -> Dict[int, Tuple[int, int, int]]:
-    palette = [
-        '#ff6b6b', '#4ecdc4', '#ffe66d', '#1a535c', '#ff9f1c',
-        '#5f0f40', '#9a031e', '#fb8b24', '#0f4c5c', '#2ec4b6',
-        '#3a86ff', '#8338ec', '#ff006e', '#8ac926', '#1982c4',
-        '#6a4c93', '#e76f51', '#2a9d8f', '#e9c46a', '#264653',
-    ]
-    colors: Dict[int, Tuple[int, int, int]] = {}
-    for idx, category_id in enumerate(sorted(set(category_ids))):
-        colors[category_id] = ImageColor.getrgb(palette[idx % len(palette)])
-    return colors
+def make_instance_color(annotation_id: int) -> Tuple[int, int, int]:
+    # Spread instance colors across the hue wheel while keeping saturation/value readable.
+    hue = ((int(annotation_id) * 137) % 360) / 360.0
+    sat = 0.72
+    val = 0.95
+    r, g, b = colorsys.hsv_to_rgb(hue, sat, val)
+    return (int(r * 255), int(g * 255), int(b * 255))
+
+
+def segmentation_is_non_empty(segmentation) -> bool:
+    if isinstance(segmentation, list):
+        return len(segmentation) > 0
+    if isinstance(segmentation, dict):
+        return bool(segmentation.get('counts')) and bool(segmentation.get('size'))
+    return False
 
 
 def build_selection(
@@ -76,7 +91,7 @@ def build_selection(
     annotations_by_image_id: Dict[int, List[dict]] = defaultdict(list)
     for ann in annotations:
         segmentation = ann.get('segmentation')
-        if not isinstance(segmentation, list) or len(segmentation) == 0:
+        if not segmentation_is_non_empty(segmentation):
             continue
         if allowed_categories is not None and ann.get('category_id') not in allowed_categories:
             continue
@@ -94,11 +109,30 @@ def build_selection(
     return selected_images, annotations_by_image_id
 
 
-def draw_polygon_overlay(
+def decode_segmentation_mask(segmentation: dict) -> np.ndarray:
+    require_mask_utils('RLE preview rendering')
+    decoded = mask_utils.decode(segmentation)
+    if decoded.ndim == 3:
+        decoded = decoded[:, :, 0]
+    return (decoded > 0).astype(np.uint8)
+
+
+def apply_rle_overlay(
+    overlay: Image.Image,
+    segmentation: dict,
+    color: Tuple[int, int, int],
+    alpha: int = 96,
+) -> Image.Image:
+    mask = decode_segmentation_mask(segmentation)
+    layer = np.zeros((mask.shape[0], mask.shape[1], 4), dtype=np.uint8)
+    layer[mask > 0] = (*color, alpha)
+    return Image.alpha_composite(overlay, Image.fromarray(layer, mode='RGBA'))
+
+
+def draw_segmentation_overlay(
     base_image: Image.Image,
     annotations: List[dict],
     category_names: Dict[int, str],
-    category_colors: Dict[int, Tuple[int, int, int]],
 ) -> Image.Image:
     image = base_image.convert('RGBA')
     overlay = Image.new('RGBA', image.size, (0, 0, 0, 0))
@@ -106,13 +140,16 @@ def draw_polygon_overlay(
 
     for ann in annotations:
         category_id = int(ann['category_id'])
-        color = category_colors.get(category_id, (255, 0, 0))
+        color = make_instance_color(int(ann['id']))
         segmentation = ann.get('segmentation', [])
-        for polygon in segmentation:
-            if not isinstance(polygon, list) or len(polygon) < 6 or len(polygon) % 2 != 0:
-                continue
-            points = [(float(polygon[i]), float(polygon[i + 1])) for i in range(0, len(polygon), 2)]
-            draw_overlay.polygon(points, fill=(*color, 96), outline=(*color, 220))
+        if isinstance(segmentation, list):
+            for polygon in segmentation:
+                if not isinstance(polygon, list) or len(polygon) < 6 or len(polygon) % 2 != 0:
+                    continue
+                points = [(float(polygon[i]), float(polygon[i + 1])) for i in range(0, len(polygon), 2)]
+                draw_overlay.polygon(points, fill=(*color, 96), outline=(*color, 220))
+        elif isinstance(segmentation, dict):
+            overlay = apply_rle_overlay(overlay, segmentation, color)
 
     rendered = Image.alpha_composite(image, overlay).convert('RGB')
     draw = ImageDraw.Draw(rendered)
@@ -120,7 +157,7 @@ def draw_polygon_overlay(
 
     for ann in annotations:
         category_id = int(ann['category_id'])
-        color = category_colors.get(category_id, (255, 0, 0))
+        color = make_instance_color(int(ann['id']))
         x, y, w, h = ann.get('bbox', [0, 0, 0, 0])
         x1 = int(round(float(x)))
         y1 = int(round(float(y)))
@@ -174,13 +211,6 @@ def render_preview(
     if not selected_images:
         raise ValueError('No images with non-empty segmentation were found for the requested filter.')
 
-    used_category_ids = [
-        int(ann['category_id'])
-        for image in selected_images
-        for ann in annotations_by_image_id[int(image['id'])]
-    ]
-    category_colors = make_category_colors(used_category_ids)
-
     output_dir.mkdir(parents=True, exist_ok=True)
     manifest: List[dict] = []
     missing_images: List[str] = []
@@ -194,11 +224,10 @@ def render_preview(
             continue
 
         with Image.open(image_path) as image:
-            rendered = draw_polygon_overlay(
+            rendered = draw_segmentation_overlay(
                 base_image=image,
                 annotations=annotations_by_image_id[image_id],
                 category_names=category_names,
-                category_colors=category_colors,
             )
             rendered.save(output_dir / file_name)
 
