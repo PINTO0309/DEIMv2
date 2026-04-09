@@ -14,20 +14,59 @@ from faster_coco_eval import COCO
 import copy
 
 
-def convert_coco_poly_to_mask(segmentations, height, width):
+def decode_coco_segmentation(segmentation, height, width):
+    empty_mask = torch.zeros((height, width), dtype=torch.uint8)
+
+    if not segmentation:
+        return empty_mask, False
+
+    try:
+        if isinstance(segmentation, list):
+            rles = coco_mask.frPyObjects(segmentation, height, width)
+            mask = coco_mask.decode(rles)
+        elif isinstance(segmentation, dict):
+            counts = segmentation.get("counts")
+            size = segmentation.get("size")
+            if not counts or not size:
+                return empty_mask, False
+            if isinstance(counts, list):
+                rles = coco_mask.frPyObjects(segmentation, height, width)
+                mask = coco_mask.decode(rles)
+            elif isinstance(counts, (str, bytes)):
+                mask = coco_mask.decode(segmentation)
+            else:
+                return empty_mask, False
+        else:
+            return empty_mask, False
+    except Exception:
+        return empty_mask, False
+
+    mask = torch.as_tensor(mask, dtype=torch.uint8)
+    if mask.ndim == 2:
+        if tuple(mask.shape) != (height, width):
+            return empty_mask, False
+        return mask, True
+
+    if mask.ndim == 3 and tuple(mask.shape[:2]) == (height, width):
+        return mask.any(dim=2).to(torch.uint8), True
+
+    return empty_mask, False
+
+
+def convert_coco_poly_to_mask(segmentations, height, width, return_valid=False):
     masks = []
-    for polygons in segmentations:
-        rles = coco_mask.frPyObjects(polygons, height, width)
-        mask = coco_mask.decode(rles)
-        if len(mask.shape) < 3:
-            mask = mask[..., None]
-        mask = torch.as_tensor(mask, dtype=torch.uint8)
-        mask = mask.any(dim=2)
+    valid_flags = []
+    for segmentation in segmentations:
+        mask, valid = decode_coco_segmentation(segmentation, height, width)
         masks.append(mask)
+        valid_flags.append(valid)
     if masks:
         masks = torch.stack(masks, dim=0)
     else:
         masks = torch.zeros((0, height, width), dtype=torch.uint8)
+
+    if return_valid:
+        return masks, torch.as_tensor(valid_flags, dtype=torch.bool)
     return masks
 
 

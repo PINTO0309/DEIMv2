@@ -12,8 +12,8 @@ import torchvision
 
 from PIL import Image
 import faster_coco_eval
-import faster_coco_eval.core.mask as coco_mask
 from ._dataset import DetDataset
+from .coco_utils import convert_coco_poly_to_mask
 from .._misc import convert_to_tv_tensor
 from ...core import register
 
@@ -99,29 +99,6 @@ class CocoDetection(torchvision.datasets.CocoDetection, DetDataset):
         return {i: cat['id'] for i, cat in enumerate(self.categories)}
 
 
-def convert_coco_poly_to_mask(segmentations, height, width):
-    masks = []
-    valid_flags = []
-    for polygons in segmentations:
-        has_polygons = isinstance(polygons, list) and len(polygons) > 0
-        valid_flags.append(has_polygons)
-        if not has_polygons:
-            masks.append(torch.zeros((height, width), dtype=torch.uint8))
-            continue
-        rles = coco_mask.frPyObjects(polygons, height, width)
-        mask = coco_mask.decode(rles)
-        if len(mask.shape) < 3:
-            mask = mask[..., None]
-        mask = torch.as_tensor(mask, dtype=torch.uint8)
-        mask = mask.any(dim=2)
-        masks.append(mask)
-    if masks:
-        masks = torch.stack(masks, dim=0)
-    else:
-        masks = torch.zeros((0, height, width), dtype=torch.uint8)
-    return masks, torch.as_tensor(valid_flags, dtype=torch.bool)
-
-
 class ConvertCocoPolysToMask(object):
     def __init__(self, return_masks=False, mask_category_ids=None, segm_eval_category_ids=None):
         self.return_masks = return_masks
@@ -164,7 +141,7 @@ class ConvertCocoPolysToMask(object):
                 mask_valid.append(has_mask)
                 segm_allowed = self.segm_eval_category_ids is None or label in self.segm_eval_category_ids
                 segm_eval_valid.append(bool(segm_allowed and 'segmentation' in obj and obj['segmentation']))
-            masks, decoded_mask_valid = convert_coco_poly_to_mask(segmentations, h, w)
+            masks, decoded_mask_valid = convert_coco_poly_to_mask(segmentations, h, w, return_valid=True)
             mask_valid = torch.as_tensor(mask_valid, dtype=torch.bool) & decoded_mask_valid
             segm_eval_valid = torch.as_tensor(segm_eval_valid, dtype=torch.bool) & decoded_mask_valid
 

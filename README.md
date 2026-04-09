@@ -338,7 +338,7 @@ ckpts/
 CUDA_VISIBLE_DEVICES=0,1,2,3 torchrun --master_port=7777 --nproc_per_node=4 train.py -c configs/deimv2/deimv2_dinov3_${model}_coco.yml --use-amp --seed=0
 CUDA_VISIBLE_DEVICES=0 torchrun --master_port=7777 --nproc_per_node=1 train.py -c configs/deimv2/deimv2_dinov3_x_wholebody34.yml --use-amp --seed=0
 CUDA_VISIBLE_DEVICES=0 torchrun --master_port=7777 --nproc_per_node=1 train.py -c configs/deimv2/deimv2_dinov3_x_wholebody40.yml --use-amp --seed=0
-CUDA_VISIBLE_DEVICES=0 torchrun --master_port=7777 --nproc_per_node=1 train.py -c configs/deimv2/deimv2_dinov3_x_wholebody40_ins_s08.yml --use-amp --seed=0
+CUDA_VISIBLE_DEVICES=0 torchrun --master_port=7777 --nproc_per_node=1 train.py -c configs/deimv2/deimv2_dinov3_x_wholebody40_ins_s08_maskhead256x3_center.yml --use-amp --seed=0
 
 # for HGNetv2-based variants
 CUDA_VISIBLE_DEVICES=0,1,2,3 torchrun --master_port=7777 --nproc_per_node=4 train.py -c configs/deimv2/deimv2_hgnetv2_${model}_coco.yml --use-amp --seed=0
@@ -421,6 +421,7 @@ Per-class mAP:
 # for ViT-based variants
 CUDA_VISIBLE_DEVICES=0,1,2,3 torchrun --master_port=7777 --nproc_per_node=4 train.py -c configs/deimv2/deimv2_dinov3_${model}_coco.yml --use-amp --seed=0 -t model.pth
 CUDA_VISIBLE_DEVICES=0 torchrun --master_port=7777 --nproc_per_node=1 train.py -c configs/deimv2/deimv2_dinov3_x_wholebody34ft.yml -t outputs/deimv2_dinov3_x_wholebody34/best_stg2.pth --use-amp --seed=0
+CUDA_VISIBLE_DEVICES=0 torchrun --master_port=7777 --nproc_per_node=1 train.py -c configs/deimv2/deimv2_dinov3_x_wholebody40_ins_s08_maskhead256x3_center.yml -t outputs/deimv2_dinov3_x_wholebody40_ins_center/last_full_epoch.pth --use-amp --seed=0
 
 # for HGNetv2-based variants
 CUDA_VISIBLE_DEVICES=0,1,2,3 torchrun --master_port=7777 --nproc_per_node=4 train.py -c configs/deimv2/deimv2_hgnetv2_${model}_coco.yml --use-amp --seed=0 -t model.pth
