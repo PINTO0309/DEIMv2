@@ -229,3 +229,7 @@ def test_det_solver_center_report_does_not_break_existing_validation_output(caps
     captured = capsys.readouterr()
     assert 'Center-point metrics:' in captured.out
     assert 'Per-class center-point metrics:' in captured.out
+    lines = captured.out.splitlines()
+    header = next(line for line in lines if line.startswith(' ID│Name'))
+    row = next(line for line in lines if line.startswith(' 21│'))
+    assert [idx for idx, ch in enumerate(header) if ch == '│'] == [idx for idx, ch in enumerate(row) if ch == '│']

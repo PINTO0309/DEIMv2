@@ -477,6 +477,7 @@ class DetSolver(BaseSolver):
             return
 
         class_names = self._resolve_class_names()
+        name_width = 25
         print('Per-class center-point metrics:')
         print(' ID│Name                     │F1    │P     │R     │MedD ')
         print('───┼─────────────────────────┼──────┼──────┼──────┼──────')
@@ -487,7 +488,7 @@ class DetSolver(BaseSolver):
             name = class_names[class_id] if class_id < len(class_names) else str(class_id)
             print(
                 f"{str(class_id).rjust(3)}│"
-                f"{name[:24].ljust(24)}│"
+                f"{name[:name_width].ljust(name_width)}│"
                 f"{metrics.get(f'f1{suffix}', float('nan')):0.4f}│"
                 f"{metrics.get(f'precision{suffix}', float('nan')):0.4f}│"
                 f"{metrics.get(f'recall{suffix}', float('nan')):0.4f}│"
