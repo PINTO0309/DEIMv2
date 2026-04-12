@@ -7,22 +7,22 @@ import json
 import math
 import os
 import pickle
+import re
 import sys
+import time
 from collections import Counter
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Dict, List, Sequence, Tuple
+from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple
 
 import cv2
 import numpy as np
 import torch
 import torch.nn as nn
-import torchvision.transforms as T
-from PIL import Image, ImageColor
 from tqdm import tqdm
 
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '../..')))
-from engine.core import YAMLConfig, load_config
+from engine.core import YAMLConfig
 from engine.misc.mask_resize import resize_masks
 
 
@@ -76,6 +76,7 @@ SIDE_PARENT_TO_CHILDREN = {
 
 LEFT_SIDE_COLOR = (0, 128, 0)
 RIGHT_SIDE_COLOR = (255, 0, 255)
+MASK_CLEANUP_PADDING = 1
 
 
 @dataclass(frozen=False)
@@ -98,6 +99,260 @@ class Box:
     track_id: int = -1
 
 
+class SimpleSortTracker:
+    """Single-person-biased tracker using IoU, gated reassociation, and smoothed boxes."""
+
+    def __init__(
+        self,
+        iou_threshold: float = 0.20,
+        max_age: int = 45,
+        min_score: float = 0.45,
+        center_gate: float = 0.25,
+        area_ratio_threshold: float = 0.35,
+        aspect_ratio_threshold: float = 0.45,
+        smoothing_alpha: float = 0.80,
+        confirmed_hit_streak: int = 3,
+    ) -> None:
+        self.iou_threshold = iou_threshold
+        self.max_age = max_age
+        self.min_score = min_score
+        self.center_gate = center_gate
+        self.area_ratio_threshold = area_ratio_threshold
+        self.aspect_ratio_threshold = aspect_ratio_threshold
+        self.smoothing_alpha = smoothing_alpha
+        self.confirmed_hit_streak = confirmed_hit_streak
+        self.next_track_id = 1
+        self.tracks: List[Dict[str, Any]] = []
+        self.frame_index = 0
+
+    @staticmethod
+    def _iou(bbox_a: Tuple[int, int, int, int], bbox_b: Tuple[int, int, int, int]) -> float:
+        ax1, ay1, ax2, ay2 = bbox_a
+        bx1, by1, bx2, by2 = bbox_b
+
+        inter_x1 = max(ax1, bx1)
+        inter_y1 = max(ay1, by1)
+        inter_x2 = min(ax2, bx2)
+        inter_y2 = min(ay2, by2)
+
+        inter_w = max(0, inter_x2 - inter_x1)
+        inter_h = max(0, inter_y2 - inter_y1)
+        if inter_w == 0 or inter_h == 0:
+            return 0.0
+
+        inter_area = inter_w * inter_h
+        area_a = max(0, ax2 - ax1) * max(0, ay2 - ay1)
+        area_b = max(0, bx2 - bx1) * max(0, by2 - by1)
+        union = area_a + area_b - inter_area
+        if union <= 0:
+            return 0.0
+        return float(inter_area / union)
+
+    @staticmethod
+    def _center_distance(bbox_a: Tuple[int, int, int, int], bbox_b: Tuple[int, int, int, int]) -> float:
+        ax1, ay1, ax2, ay2 = bbox_a
+        bx1, by1, bx2, by2 = bbox_b
+        acx = (ax1 + ax2) * 0.5
+        acy = (ay1 + ay2) * 0.5
+        bcx = (bx1 + bx2) * 0.5
+        bcy = (by1 + by2) * 0.5
+        return float(math.hypot(acx - bcx, acy - bcy))
+
+    @staticmethod
+    def _area_ratio(bbox_a: Tuple[int, int, int, int], bbox_b: Tuple[int, int, int, int]) -> float:
+        ax1, ay1, ax2, ay2 = bbox_a
+        bx1, by1, bx2, by2 = bbox_b
+        area_a = max(0, ax2 - ax1) * max(0, ay2 - ay1)
+        area_b = max(0, bx2 - bx1) * max(0, by2 - by1)
+        if area_a <= 0 or area_b <= 0:
+            return 0.0
+        return float(min(area_a, area_b) / max(area_a, area_b))
+
+    @staticmethod
+    def _aspect_ratio(bbox: Tuple[int, int, int, int]) -> float:
+        x1, y1, x2, y2 = bbox
+        width = max(1.0, float(x2 - x1))
+        height = max(1.0, float(y2 - y1))
+        return width / height
+
+    def _adaptive_center_threshold(self, bbox_a: Tuple[int, int, int, int], bbox_b: Tuple[int, int, int, int]) -> float:
+        ax1, ay1, ax2, ay2 = bbox_a
+        bx1, by1, bx2, by2 = bbox_b
+        diag_a = math.hypot(ax2 - ax1, ay2 - ay1)
+        diag_b = math.hypot(bx2 - bx1, by2 - by1)
+        return max(24.0, diag_a * self.center_gate, diag_b * self.center_gate)
+
+    @staticmethod
+    def _bbox_tuple_from_smoothed(smoothed_bbox: Sequence[float]) -> Tuple[int, int, int, int]:
+        return tuple(int(round(v)) for v in smoothed_bbox)
+
+    def _blend_bbox(
+        self,
+        previous_bbox: Sequence[float],
+        current_bbox: Tuple[int, int, int, int],
+    ) -> List[float]:
+        return [
+            self.smoothing_alpha * float(previous_bbox[idx]) + (1.0 - self.smoothing_alpha) * float(current_bbox[idx])
+            for idx in range(4)
+        ]
+
+    def _is_viable_reassociation(
+        self,
+        track_bbox: Tuple[int, int, int, int],
+        det_bbox: Tuple[int, int, int, int],
+    ) -> bool:
+        if self._area_ratio(track_bbox, det_bbox) < self.area_ratio_threshold:
+            return False
+        track_ar = self._aspect_ratio(track_bbox)
+        det_ar = self._aspect_ratio(det_bbox)
+        ar_ratio = min(track_ar, det_ar) / max(track_ar, det_ar)
+        if ar_ratio < self.aspect_ratio_threshold:
+            return False
+        center_distance = self._center_distance(track_bbox, det_bbox)
+        if center_distance > self._adaptive_center_threshold(track_bbox, det_bbox):
+            return False
+        return True
+
+    def _track_priority(self, track: Dict[str, Any]) -> Tuple[int, int, float, int]:
+        confirmed = 1 if track.get('confirmed', False) else 0
+        return (confirmed, track['hit_streak'], float(track['last_score']), -int(track['missed']))
+
+    def update(self, boxes: List[Box]) -> None:
+        self.frame_index += 1
+
+        for box in boxes:
+            box.track_id = -1
+
+        detections = [box for box in boxes if box.score >= self.min_score]
+
+        if not detections and not self.tracks:
+            return
+
+        iou_matrix = None
+        if self.tracks and detections:
+            iou_matrix = np.zeros((len(self.tracks), len(detections)), dtype=np.float32)
+            for track_idx, track in enumerate(self.tracks):
+                track_bbox = self._bbox_tuple_from_smoothed(track['smoothed_bbox'])
+                for det_idx, box in enumerate(detections):
+                    det_bbox = (box.x1, box.y1, box.x2, box.y2)
+                    iou_matrix[track_idx, det_idx] = self._iou(track_bbox, det_bbox)
+
+        matched_tracks: set[int] = set()
+        matched_detections: set[int] = set()
+        matches: List[Tuple[int, int]] = []
+
+        if iou_matrix is not None and iou_matrix.size > 0:
+            while True:
+                best_track = -1
+                best_det = -1
+                best_iou = self.iou_threshold
+                for track_idx in sorted(
+                    range(len(self.tracks)),
+                    key=lambda idx: self._track_priority(self.tracks[idx]),
+                    reverse=True,
+                ):
+                    if track_idx in matched_tracks:
+                        continue
+                    for det_idx in range(len(detections)):
+                        if det_idx in matched_detections:
+                            continue
+                        iou = float(iou_matrix[track_idx, det_idx])
+                        if iou > best_iou:
+                            best_iou = iou
+                            best_track = track_idx
+                            best_det = det_idx
+                if best_track == -1:
+                    break
+                matched_tracks.add(best_track)
+                matched_detections.add(best_det)
+                matches.append((best_track, best_det))
+
+        # Recover from small frame-to-frame box jitter when IoU alone is too strict.
+        fallback_candidates: List[Tuple[float, int, int]] = []
+        for track_idx, track in enumerate(self.tracks):
+            if track_idx in matched_tracks:
+                continue
+            track_bbox = self._bbox_tuple_from_smoothed(track['smoothed_bbox'])
+            for det_idx, box in enumerate(detections):
+                if det_idx in matched_detections:
+                    continue
+                det_bbox = (box.x1, box.y1, box.x2, box.y2)
+                if self._is_viable_reassociation(track_bbox, det_bbox):
+                    center_distance = self._center_distance(track_bbox, det_bbox)
+                    fallback_candidates.append((center_distance, track_idx, det_idx))
+
+        fallback_candidates.sort(key=lambda item: item[0])
+        for _, track_idx, det_idx in fallback_candidates:
+            if track_idx in matched_tracks or det_idx in matched_detections:
+                continue
+            matched_tracks.add(track_idx)
+            matched_detections.add(det_idx)
+            matches.append((track_idx, det_idx))
+
+        for track_idx, det_idx in matches:
+            track = self.tracks[track_idx]
+            det_box = detections[det_idx]
+            det_bbox = (det_box.x1, det_box.y1, det_box.x2, det_box.y2)
+            previous_smoothed = track['smoothed_bbox']
+            track['bbox'] = det_bbox
+            track['smoothed_bbox'] = self._blend_bbox(previous_smoothed, det_bbox)
+            track['missed'] = 0
+            track['age'] += 1
+            track['hit_streak'] += 1
+            track['confirmed'] = track.get('confirmed', False) or track['hit_streak'] >= self.confirmed_hit_streak
+            track['last_score'] = float(det_box.score)
+            track['last_seen'] = self.frame_index
+            det_box.track_id = track['id']
+
+        surviving_tracks: List[Dict[str, Any]] = []
+        for idx, track in enumerate(self.tracks):
+            if idx in matched_tracks:
+                surviving_tracks.append(track)
+                continue
+            track['missed'] += 1
+            track['age'] += 1
+            was_confirmed = track.get('confirmed', False) or track['hit_streak'] >= self.confirmed_hit_streak
+            max_allowed_age = self.max_age + 15 if was_confirmed else self.max_age
+            track['hit_streak'] = 0
+            track['confirmed'] = was_confirmed
+            if track['missed'] <= max_allowed_age:
+                surviving_tracks.append(track)
+        self.tracks = surviving_tracks
+
+        has_recent_confirmed_track = any(
+            track['missed'] <= 5 and track.get('confirmed', False)
+            for track in self.tracks
+        )
+
+        for det_idx, det_box in enumerate(detections):
+            if det_idx in matched_detections:
+                continue
+            if has_recent_confirmed_track:
+                continue
+            track_id = self.next_track_id
+            self.next_track_id += 1
+            det_box.track_id = track_id
+            det_bbox = (det_box.x1, det_box.y1, det_box.x2, det_box.y2)
+            self.tracks.append(
+                {
+                    'id': track_id,
+                    'bbox': det_bbox,
+                    'smoothed_bbox': [float(v) for v in det_bbox],
+                    'missed': 0,
+                    'age': 1,
+                    'hit_streak': 1,
+                    'confirmed': False,
+                    'last_score': float(det_box.score),
+                    'last_seen': self.frame_index,
+                }
+            )
+
+    def reset(self) -> None:
+        self.next_track_id = 1
+        self.tracks.clear()
+        self.frame_index = 0
+
+
 def make_instance_color(instance_idx: int) -> Tuple[int, int, int]:
     palette = [
         '#ff6b6b', '#4ecdc4', '#ffe66d', '#1a535c', '#ff9f1c',
@@ -105,7 +360,9 @@ def make_instance_color(instance_idx: int) -> Tuple[int, int, int]:
         '#3a86ff', '#8338ec', '#ff006e', '#8ac926', '#1982c4',
         '#6a4c93', '#e76f51', '#2a9d8f', '#e9c46a', '#264653',
     ]
-    return ImageColor.getrgb(palette[instance_idx % len(palette)])
+    hex_color = palette[instance_idx % len(palette)].lstrip('#')
+    rgb = tuple(int(hex_color[pos:pos + 2], 16) for pos in (0, 2, 4))
+    return (rgb[2], rgb[1], rgb[0])
 
 
 def list_image_paths(images_dir: Path) -> List[Path]:
@@ -226,14 +483,64 @@ def build_onnx_providers(device_arg: str | None, model_path: Path, inference_typ
     return ['CPUExecutionProvider']
 
 
-def build_transform(image_size: Sequence[int], normalize: bool) -> T.Compose:
-    ops: List[object] = [
-        T.Resize(tuple(image_size)),
-        T.ToTensor(),
-    ]
-    if normalize:
-        ops.append(T.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]))
-    return T.Compose(ops)
+def build_transform(image_size: Sequence[int], normalize: bool) -> Callable[[np.ndarray], torch.Tensor]:
+    target_h, target_w = int(image_size[0]), int(image_size[1])
+    mean = torch.tensor([0.485, 0.456, 0.406], dtype=torch.float32).view(3, 1, 1)
+    std = torch.tensor([0.229, 0.224, 0.225], dtype=torch.float32).view(3, 1, 1)
+
+    def transform(image_bgr: np.ndarray) -> torch.Tensor:
+        image_rgb = cv2.cvtColor(image_bgr, cv2.COLOR_BGR2RGB)
+        resized = cv2.resize(image_rgb, (target_w, target_h), interpolation=cv2.INTER_LINEAR)
+        tensor = torch.from_numpy(np.ascontiguousarray(resized.transpose(2, 0, 1))).to(dtype=torch.float32) / 255.0
+        if normalize:
+            tensor = (tensor - mean) / std
+        return tensor
+
+    return transform
+
+
+def build_onnx_transform(image_size: Sequence[int] | None) -> Callable[[np.ndarray], torch.Tensor]:
+    def transform(image_bgr: np.ndarray) -> torch.Tensor:
+        resized = image_bgr
+        if image_size is not None:
+            target_h = int(image_size[0])
+            target_w = int(image_size[1])
+            resized = cv2.resize(image_bgr, (target_w, target_h), interpolation=cv2.INTER_LINEAR)
+        rgb = cv2.cvtColor(resized, cv2.COLOR_BGR2RGB)
+        chw = np.ascontiguousarray(rgb.transpose(2, 0, 1), dtype=np.float32) / 255.0
+        return torch.from_numpy(chw)
+
+    return transform
+
+
+def build_onnx_transform_with_normalize(
+    image_size: Sequence[int] | None,
+    normalize: bool,
+) -> Callable[[np.ndarray], torch.Tensor]:
+    target_h = None if image_size is None else int(image_size[0])
+    target_w = None if image_size is None else int(image_size[1])
+    mean = torch.tensor([0.485, 0.456, 0.406], dtype=torch.float32).view(3, 1, 1)
+    std = torch.tensor([0.229, 0.224, 0.225], dtype=torch.float32).view(3, 1, 1)
+
+    def transform(image_bgr: np.ndarray) -> torch.Tensor:
+        resized = image_bgr
+        if target_h is not None and target_w is not None:
+            resized = cv2.resize(image_bgr, (target_w, target_h), interpolation=cv2.INTER_LINEAR)
+        rgb = cv2.cvtColor(resized, cv2.COLOR_BGR2RGB)
+        tensor = torch.from_numpy(np.ascontiguousarray(rgb.transpose(2, 0, 1), dtype=np.float32)) / 255.0
+        if normalize:
+            tensor = (tensor - mean) / std
+        return tensor
+
+    return transform
+
+
+def infer_onnx_normalize_from_model_path(model_path: Path) -> bool:
+    tokens = [token for token in re.split(r'[^a-z0-9]+', model_path.stem.lower()) if token]
+    no_norm_tokens = {'atto', 'femto', 'pico', 'n'}
+    if any(token in no_norm_tokens for token in tokens):
+        return False
+    return True
 
 
 def binary_mask_bbox(mask: np.ndarray) -> List[int] | None:
@@ -456,6 +763,7 @@ def prepare_prediction_payload(
             'gender': box.gender,
             'handedness': box.handedness,
             'head_pose': box.head_pose,
+            'track_id': box.track_id,
         }
 
         if masks is not None and box.classid == BODY_CLASS_ID and box.source_idx >= 0:
@@ -507,21 +815,81 @@ def lookup_mask_probs(
     return mask_array
 
 
+def cleanup_outside_isolated_body_mask_pixels(
+    binary_mask: np.ndarray,
+    box: Box,
+    padding: int = MASK_CLEANUP_PADDING,
+) -> np.ndarray:
+    mask_bbox = binary_mask_bbox(binary_mask)
+    if mask_bbox is None:
+        return binary_mask
+
+    image_height, image_width = binary_mask.shape[:2]
+    seed_x1 = max(0, box.x1 - padding)
+    seed_y1 = max(0, box.y1 - padding)
+    seed_x2 = min(image_width - 1, box.x2 + padding)
+    seed_y2 = min(image_height - 1, box.y2 + padding)
+
+    mask_x1, mask_y1, mask_x2, mask_y2 = mask_bbox
+    if mask_x1 >= seed_x1 and mask_y1 >= seed_y1 and mask_x2 <= seed_x2 and mask_y2 <= seed_y2:
+        return binary_mask
+
+    roi_x1 = max(0, min(mask_x1, seed_x1) - padding)
+    roi_y1 = max(0, min(mask_y1, seed_y1) - padding)
+    roi_x2 = min(image_width - 1, max(mask_x2, seed_x2) + padding)
+    roi_y2 = min(image_height - 1, max(mask_y2, seed_y2) + padding)
+
+    roi_mask = np.ascontiguousarray(
+        binary_mask[roi_y1:roi_y2 + 1, roi_x1:roi_x2 + 1].astype(np.uint8, copy=False)
+    )
+    if not roi_mask.any():
+        return binary_mask
+
+    seed_rel_x1 = seed_x1 - roi_x1
+    seed_rel_y1 = seed_y1 - roi_y1
+    seed_rel_x2 = seed_x2 - roi_x1
+    seed_rel_y2 = seed_y2 - roi_y1
+
+    seed_positive = roi_mask[seed_rel_y1:seed_rel_y2 + 1, seed_rel_x1:seed_rel_x2 + 1]
+    if not seed_positive.any():
+        return binary_mask
+
+    num_labels, labels = cv2.connectedComponents(roi_mask, connectivity=8)
+    if num_labels <= 2:
+        return binary_mask
+
+    seed_region = np.zeros(roi_mask.shape, dtype=bool)
+    seed_region[seed_rel_y1:seed_rel_y2 + 1, seed_rel_x1:seed_rel_x2 + 1] = True
+    keep_labels = np.unique(labels[seed_region & (roi_mask > 0)])
+    if keep_labels.size == 0:
+        return binary_mask
+
+    cleaned_roi = np.isin(labels, keep_labels)
+    if np.array_equal(cleaned_roi, roi_mask.astype(bool, copy=False)):
+        return binary_mask
+
+    cleaned_mask = binary_mask.copy()
+    cleaned_mask[roi_y1:roi_y2 + 1, roi_x1:roi_x2 + 1] = cleaned_roi
+    return cleaned_mask
+
+
 def overlay_body_masks(
-    image: Image.Image,
+    image: np.ndarray,
     result: Dict[str, torch.Tensor],
     boxes: List[Box],
     mask_threshold: float,
     mask_alpha: int,
     disable_render_classids: set[int],
-) -> Image.Image:
+    track_color_cache: Optional[Dict[int, np.ndarray]] = None,
+) -> np.ndarray:
     masks = result.get('masks')
     if masks is None or BODY_CLASS_ID in disable_render_classids:
         return image
 
     if torch.is_tensor(masks):
         masks = masks.detach().cpu()
-    overlay = np.zeros((image.height, image.width, 4), dtype=np.uint8)
+    overlay = np.zeros_like(image, dtype=np.uint8)
+    mask_union = np.zeros(image.shape[:2], dtype=bool)
     body_instance_idx = 0
 
     for box in boxes:
@@ -533,32 +901,40 @@ def overlay_body_masks(
         binary_mask = mask_probs >= mask_threshold
         if not binary_mask.any():
             continue
-        instance_color = make_instance_color(body_instance_idx)
-        overlay[binary_mask] = np.array([instance_color[0], instance_color[1], instance_color[2], mask_alpha], dtype=np.uint8)
+        binary_mask = cleanup_outside_isolated_body_mask_pixels(binary_mask, box)
+        cached_color = track_color_cache.get(box.track_id) if track_color_cache is not None and box.track_id > 0 else None
+        if isinstance(cached_color, np.ndarray):
+            instance_color = tuple(int(np.clip(v, 0, 255)) for v in cached_color.tolist())
+        else:
+            instance_color = make_instance_color(body_instance_idx)
+        overlay[binary_mask] = np.array(instance_color, dtype=np.uint8)
+        mask_union |= binary_mask
         body_instance_idx += 1
 
-    if overlay[..., 3].max() == 0:
+    if not mask_union.any():
         return image
 
-    base = image.convert('RGBA')
-    mask_image = Image.fromarray(overlay)
-    return Image.alpha_composite(base, mask_image).convert('RGB')
+    alpha = float(mask_alpha) / 255.0
+    rendered = image.astype(np.float32, copy=True)
+    rendered[mask_union] = rendered[mask_union] * (1.0 - alpha) + overlay[mask_union].astype(np.float32) * alpha
+    return np.clip(rendered, 0, 255).astype(np.uint8)
 
 
 def overlay_body_contours(
-    image: Image.Image,
+    image: np.ndarray,
     result: Dict[str, torch.Tensor],
     boxes: List[Box],
     contour_threshold: float,
     disable_render_classids: set[int],
-) -> Image.Image:
+    track_color_cache: Optional[Dict[int, np.ndarray]] = None,
+) -> np.ndarray:
     contours = result.get('contours')
     if contours is None or BODY_CLASS_ID in disable_render_classids:
         return image
 
     if torch.is_tensor(contours):
         contours = contours.detach().cpu()
-    rendered = cv2.cvtColor(np.array(image), cv2.COLOR_RGB2BGR)
+    rendered = image.copy()
     body_instance_idx = 0
 
     for box in boxes:
@@ -575,17 +951,21 @@ def overlay_body_contours(
         if not contour_segments:
             continue
 
-        instance_color = make_instance_color(body_instance_idx)
+        cached_color = track_color_cache.get(box.track_id) if track_color_cache is not None and box.track_id > 0 else None
+        if isinstance(cached_color, np.ndarray):
+            instance_color = tuple(int(np.clip(v, 0, 255)) for v in cached_color.tolist())
+        else:
+            instance_color = make_instance_color(body_instance_idx)
         cv2.drawContours(
             rendered,
             contour_segments,
             contourIdx=-1,
-            color=(instance_color[2], instance_color[1], instance_color[0]),
+            color=instance_color,
             thickness=1,
         )
         body_instance_idx += 1
 
-    return Image.fromarray(cv2.cvtColor(rendered, cv2.COLOR_BGR2RGB))
+    return rendered
 
 
 def draw_dashed_line(
@@ -815,7 +1195,7 @@ def get_render_color(
 
 
 def draw_detections(
-    image: Image.Image,
+    image: np.ndarray,
     boxes: List[Box],
     disable_render_classids: set[int],
     keypoint_drawing_mode: str,
@@ -828,8 +1208,10 @@ def draw_detections(
     bounding_box_line_width: int,
     enable_head_distance_measurement: bool,
     camera_horizontal_fov: int,
-) -> Image.Image:
-    debug_image = cv2.cvtColor(np.array(image), cv2.COLOR_RGB2BGR)
+    enable_trackid_overlay: bool = False,
+    track_color_cache: Optional[Dict[int, np.ndarray]] = None,
+) -> np.ndarray:
+    debug_image = image.copy()
     debug_image_h, debug_image_w = debug_image.shape[:2]
     white_line_width = bounding_box_line_width
     colored_line_width = white_line_width - 1
@@ -908,6 +1290,38 @@ def draw_detections(
             cv2.rectangle(debug_image, (box.x1, box.y1), (box.x2, box.y2), (255, 255, 255), white_line_width)
             cv2.rectangle(debug_image, (box.x1, box.y1), (box.x2, box.y2), color, colored_line_width)
 
+        if enable_trackid_overlay and classid == BODY_CLASS_ID and box.track_id > 0:
+            track_text = f'ID: {box.track_id}'
+            track_x = max(box.x1 - 5, 0)
+            track_y = box.y1 - 30
+            if track_y < 20:
+                track_y = min(box.y2 + 25, debug_image_h - 10)
+            cached_color = track_color_cache.get(box.track_id) if track_color_cache is not None else None
+            if isinstance(cached_color, np.ndarray):
+                text_color = tuple(int(np.clip(v, 0, 255)) for v in cached_color.tolist())
+            else:
+                text_color = color
+            cv2.putText(
+                debug_image,
+                track_text,
+                (track_x, track_y),
+                cv2.FONT_HERSHEY_SIMPLEX,
+                0.6,
+                (10, 10, 10),
+                2,
+                cv2.LINE_AA,
+            )
+            cv2.putText(
+                debug_image,
+                track_text,
+                (track_x, track_y),
+                cv2.FONT_HERSHEY_SIMPLEX,
+                0.6,
+                text_color,
+                1,
+                cv2.LINE_AA,
+            )
+
         generation_txt = ''
         if box.generation == 0:
             generation_txt = 'Adult'
@@ -957,7 +1371,7 @@ def draw_detections(
     if enable_bone_drawing_mode:
         draw_skeleton(image=debug_image, boxes=boxes, color=(0, 255, 255), max_dist_threshold=300)
 
-    return Image.fromarray(cv2.cvtColor(debug_image, cv2.COLOR_BGR2RGB))
+    return debug_image
 
 
 class InferenceModel(nn.Module):
@@ -1161,36 +1575,32 @@ def save_predictions_json(output_dir: Path, image_path: Path, records: List[Dict
         json.dump(payload, file, ensure_ascii=False, indent=2)
 
 
-def process_images(args) -> None:
-    config_path = Path(args.config)
-    resume_path = Path(args.resume)
-    images_dir = Path(args.images_dir)
-    output_dir = Path(args.output_dir)
+def save_predictions_json_by_name(output_dir: Path, item_name: str, item_stem: str, records: List[Dict[str, object]]) -> None:
+    pred_dir = output_dir / 'predictions'
+    pred_dir.mkdir(parents=True, exist_ok=True)
+    payload = {
+        'image': item_name,
+        'predictions': records,
+    }
+    with (pred_dir / f'{item_stem}.json').open('w', encoding='utf-8') as file:
+        json.dump(payload, file, ensure_ascii=False, indent=2)
+
+
+def initialize_model(args, config_path: Path, resume_path: Path):
     use_onnx = is_onnx_model(resume_path)
-
-    if not config_path.exists():
-        raise FileNotFoundError(f'Config file not found: {config_path}')
-    if not resume_path.exists():
-        raise FileNotFoundError(f'Model file not found: {resume_path}')
-    if not images_dir.exists() or not images_dir.is_dir():
-        raise FileNotFoundError(f'Image directory not found: {images_dir}')
-
-    image_paths = list_image_paths(images_dir)
-    if not image_paths:
-        raise FileNotFoundError(f'No image files found in {images_dir}')
-
-    output_dir.mkdir(parents=True, exist_ok=True)
+    device: Optional[torch.device] = None
 
     if use_onnx:
-        yaml_cfg = load_config(str(config_path))
         model = OnnxInferenceModel(
             resume_path,
             args.device,
             args.inference_type,
             mask_resize_origin=args.mask_resize_origin,
         )
-        image_size = model.image_size or tuple(yaml_cfg['eval_spatial_size'])
-        normalize = bool(yaml_cfg.get('DINOv3STAs', False))
+        transform = build_onnx_transform_with_normalize(
+            model.image_size,
+            normalize=infer_onnx_normalize_from_model_path(resume_path),
+        )
     else:
         if (args.device or '').lower() == 'tensorrt':
             raise ValueError('TensorRT inference is only supported when --resume points to an ONNX model.')
@@ -1205,15 +1615,259 @@ def process_images(args) -> None:
         model = InferenceModel(cfg, state_dict, device, mask_resize_origin=args.mask_resize_origin)
         image_size = cfg.yaml_cfg['eval_spatial_size']
         normalize = bool(cfg.yaml_cfg.get('DINOv3STAs', False))
+        transform = build_transform(image_size, normalize)
 
-    transform = build_transform(image_size, normalize)
+    return model, transform, use_onnx, device
 
-    object_score_threshold = args.object_score_threshold if args.object_score_threshold is not None else args.score_threshold
-    attribute_score_threshold = args.attribute_score_threshold if args.attribute_score_threshold is not None else args.score_threshold
-    keypoint_threshold = args.keypoint_threshold if args.keypoint_threshold is not None else args.score_threshold
-    disable_render_classids = set(args.disable_render_classids)
 
-    print(f'Processing {len(image_paths)} images from {images_dir}')
+def prepare_runtime_settings(args) -> Dict[str, object]:
+    return {
+        'object_score_threshold': args.object_score_threshold if args.object_score_threshold is not None else args.score_threshold,
+        'attribute_score_threshold': args.attribute_score_threshold if args.attribute_score_threshold is not None else args.score_threshold,
+        'keypoint_threshold': args.keypoint_threshold if args.keypoint_threshold is not None else args.score_threshold,
+        'tracking_iou_threshold': args.tracking_iou_threshold,
+        'tracking_max_age': args.tracking_max_age,
+        'tracking_min_score': args.tracking_min_score,
+        'tracking_center_gate': args.tracking_center_gate,
+        'disable_render_classids': set(args.disable_render_classids),
+        'enable_tracking': not args.disable_tracking,
+        'enable_trackid_overlay': not args.disable_trackid_overlay,
+        'enable_head_distance_measurement': not args.disable_head_distance_measurement,
+        'keypoint_drawing_mode': args.keypoint_drawing_mode,
+        'enable_bone_drawing_mode': args.enable_bone_drawing_mode,
+        'disable_generation_identification_mode': args.disable_generation_identification_mode,
+        'disable_gender_identification_mode': args.disable_gender_identification_mode,
+        'disable_left_and_right_hand_identification_mode': args.disable_left_and_right_hand_identification_mode,
+        'disable_headpose_identification_mode': args.disable_headpose_identification_mode,
+        'enable_face_mosaic': args.enable_face_mosaic,
+    }
+
+
+def run_model_inference(
+    image: np.ndarray,
+    model,
+    transform: Callable[[np.ndarray], torch.Tensor],
+    use_onnx: bool,
+    device: Optional[torch.device],
+    args,
+    runtime_settings: Dict[str, object],
+) -> Tuple[Dict[str, torch.Tensor], List[Box]]:
+    orig_h, orig_w = image.shape[:2]
+    orig_target_sizes = torch.tensor([[orig_w, orig_h]], dtype=torch.float32)
+    image_tensor = transform(image).unsqueeze(0)
+    if not use_onnx and device is not None:
+        image_tensor = image_tensor.to(device)
+
+    results = model(
+        image_tensor,
+        orig_target_sizes,
+        return_masks=args.enable_masks,
+        return_contours=args.enable_contours,
+    )
+    result = results[0]
+
+    boxes = build_result_boxes(
+        result=result,
+        image_width=orig_w,
+        image_height=orig_h,
+        object_score_threshold=runtime_settings['object_score_threshold'],
+        attribute_score_threshold=runtime_settings['attribute_score_threshold'],
+        keypoint_threshold=runtime_settings['keypoint_threshold'],
+        disable_generation_identification_mode=runtime_settings['disable_generation_identification_mode'],
+        disable_gender_identification_mode=runtime_settings['disable_gender_identification_mode'],
+        disable_left_and_right_hand_identification_mode=runtime_settings['disable_left_and_right_hand_identification_mode'],
+        disable_headpose_identification_mode=runtime_settings['disable_headpose_identification_mode'],
+    )
+
+    body_source_indices = [box.source_idx for box in boxes if box.classid == BODY_CLASS_ID and box.source_idx >= 0]
+    if use_onnx and args.enable_masks:
+        raw_masks = result.pop('_onnx_masks', None)
+        if raw_masks is not None:
+            result['masks'] = model._resize_selected_mask_map(
+                raw_masks,
+                orig_target_sizes[0],
+                body_source_indices,
+            )
+    if use_onnx and args.enable_contours:
+        raw_contours = result.pop('_onnx_contours', None)
+        if raw_contours is not None:
+            result['contours'] = model._resize_selected_mask_map(
+                raw_contours,
+                orig_target_sizes[0],
+                body_source_indices,
+            )
+
+    return result, boxes
+
+
+def apply_tracking_to_boxes(
+    boxes: List[Box],
+    enable_tracking: bool,
+    tracker: SimpleSortTracker,
+    track_color_cache: Dict[int, np.ndarray],
+    tracking_enabled_prev: bool,
+) -> bool:
+    body_boxes = [box for box in boxes if box.classid == BODY_CLASS_ID]
+    if enable_tracking:
+        if not tracking_enabled_prev:
+            tracker.reset()
+            track_color_cache.clear()
+        tracker.update(body_boxes)
+        for box in body_boxes:
+            if box.track_id > 0 and box.track_id not in track_color_cache:
+                track_color_cache[box.track_id] = np.array(make_instance_color(box.track_id - 1), dtype=np.uint8)
+        active_track_ids = {track['id'] for track in tracker.tracks}
+        stale_ids = [track_id for track_id in track_color_cache.keys() if track_id not in active_track_ids]
+        for track_id in stale_ids:
+            track_color_cache.pop(track_id, None)
+    else:
+        if tracking_enabled_prev:
+            tracker.reset()
+            track_color_cache.clear()
+        for box in boxes:
+            box.track_id = -1
+    return enable_tracking
+
+
+def render_frame(
+    image: np.ndarray,
+    result: Dict[str, torch.Tensor],
+    boxes: List[Box],
+    args,
+    runtime_settings: Dict[str, object],
+    track_color_cache: Optional[Dict[int, np.ndarray]] = None,
+) -> np.ndarray:
+    rendered = overlay_body_masks(
+        image=image.copy(),
+        result=result,
+        boxes=boxes,
+        mask_threshold=args.mask_threshold,
+        mask_alpha=args.mask_alpha,
+        disable_render_classids=runtime_settings['disable_render_classids'],
+        track_color_cache=track_color_cache,
+    )
+    rendered = overlay_body_contours(
+        image=rendered,
+        result=result,
+        boxes=boxes,
+        contour_threshold=args.mask_threshold,
+        disable_render_classids=runtime_settings['disable_render_classids'],
+        track_color_cache=track_color_cache,
+    )
+    return draw_detections(
+        image=rendered,
+        boxes=boxes,
+        disable_render_classids=runtime_settings['disable_render_classids'],
+        keypoint_drawing_mode=runtime_settings['keypoint_drawing_mode'],
+        enable_bone_drawing_mode=runtime_settings['enable_bone_drawing_mode'],
+        enable_face_mosaic=runtime_settings['enable_face_mosaic'],
+        disable_generation_identification_mode=runtime_settings['disable_generation_identification_mode'],
+        disable_gender_identification_mode=runtime_settings['disable_gender_identification_mode'],
+        disable_left_and_right_hand_identification_mode=runtime_settings['disable_left_and_right_hand_identification_mode'],
+        disable_headpose_identification_mode=runtime_settings['disable_headpose_identification_mode'],
+        bounding_box_line_width=args.bounding_box_line_width,
+        enable_head_distance_measurement=runtime_settings['enable_head_distance_measurement'],
+        camera_horizontal_fov=args.camera_horizontal_fov,
+        enable_trackid_overlay=runtime_settings['enable_trackid_overlay'],
+        track_color_cache=track_color_cache,
+    )
+
+
+def render_frame_from_input(
+    image: np.ndarray,
+    model,
+    transform: Callable[[np.ndarray], torch.Tensor],
+    use_onnx: bool,
+    device: Optional[torch.device],
+    args,
+    runtime_settings: Dict[str, object],
+    tracker: Optional[SimpleSortTracker] = None,
+    track_color_cache: Optional[Dict[int, np.ndarray]] = None,
+    tracking_enabled_prev: bool = False,
+) -> Tuple[np.ndarray, Dict[str, torch.Tensor], List[Box], float, bool]:
+    start_time = time.perf_counter()
+    result, boxes = run_model_inference(
+        image=image,
+        model=model,
+        transform=transform,
+        use_onnx=use_onnx,
+        device=device,
+        args=args,
+        runtime_settings=runtime_settings,
+    )
+    elapsed_time = time.perf_counter() - start_time
+
+    if tracker is not None and track_color_cache is not None:
+        tracking_enabled_prev = apply_tracking_to_boxes(
+            boxes=boxes,
+            enable_tracking=runtime_settings['enable_tracking'],
+            tracker=tracker,
+            track_color_cache=track_color_cache,
+            tracking_enabled_prev=tracking_enabled_prev,
+        )
+
+    rendered = render_frame(
+        image=image,
+        result=result,
+        boxes=boxes,
+        args=args,
+        runtime_settings=runtime_settings,
+        track_color_cache=track_color_cache,
+    )
+    return rendered, result, boxes, elapsed_time, tracking_enabled_prev
+
+
+def save_stream_predictions(output_dir: Path, frame_index: int, records: List[Dict[str, object]]) -> None:
+    frame_name = f'{frame_index:08d}.png'
+    frame_stem = f'{frame_index:08d}'
+    save_predictions_json_by_name(output_dir, frame_name, frame_stem, records)
+
+
+def is_parsable_to_int(value: str) -> bool:
+    try:
+        int(value)
+        return True
+    except (TypeError, ValueError):
+        return False
+
+
+def create_video_writer(output_dir: Path, frame_width: int, frame_height: int, fps: float) -> cv2.VideoWriter:
+    safe_fps = fps if fps and math.isfinite(fps) and fps > 0 else 30.0
+    fourcc = cv2.VideoWriter.fourcc(*'mp4v')
+    return cv2.VideoWriter(
+        filename=str(output_dir / 'output.mp4'),
+        fourcc=fourcc,
+        fps=safe_fps,
+        frameSize=(frame_width, frame_height),
+    )
+
+
+def process_images(args) -> None:
+    config_path = Path(args.config)
+    resume_path = Path(args.resume)
+    images_dir = Path(args.images_dir) if args.images_dir is not None else None
+    output_dir = Path(args.output_dir)
+    video = args.video
+    use_onnx = is_onnx_model(resume_path)
+
+    if not resume_path.exists():
+        raise FileNotFoundError(f'Model file not found: {resume_path}')
+    if not use_onnx and not config_path.exists():
+        raise FileNotFoundError(f'Config file not found: {config_path}')
+    if images_dir is not None:
+        if not images_dir.exists() or not images_dir.is_dir():
+            raise FileNotFoundError(f'Image directory not found: {images_dir}')
+        image_paths = list_image_paths(images_dir)
+        if not image_paths:
+            raise FileNotFoundError(f'No image files found in {images_dir}')
+    else:
+        image_paths = None
+
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    model, transform, use_onnx, device = initialize_model(args, config_path, resume_path)
+    runtime_settings = prepare_runtime_settings(args)
+
     print(f'Using model: {resume_path}')
     if use_onnx:
         print(f'ONNX providers: {model.providers}')
@@ -1223,100 +1877,145 @@ def process_images(args) -> None:
     print(f'Mask resize origin: {args.mask_resize_origin}')
     print(f'Enable masks: {args.enable_masks}')
     print(f'Enable contours: {args.enable_contours}')
-
-    for image_path in tqdm(
-        image_paths,
-        desc='Processing images',
-        dynamic_ncols=True,
-        unit='image',
-    ):
-        image = Image.open(image_path).convert('RGB')
-        orig_w, orig_h = image.size
-        orig_target_sizes = torch.tensor([[orig_w, orig_h]], dtype=torch.float32)
-        image_tensor = transform(image).unsqueeze(0)
-        if not use_onnx:
-            image_tensor = image_tensor.to(device)
-
-        results = model(
-            image_tensor,
-            orig_target_sizes,
-            return_masks=args.enable_masks,
-            return_contours=args.enable_contours,
+    if image_paths is not None:
+        tracker = SimpleSortTracker(
+            iou_threshold=runtime_settings['tracking_iou_threshold'],
+            max_age=runtime_settings['tracking_max_age'],
+            min_score=runtime_settings['tracking_min_score'],
+            center_gate=runtime_settings['tracking_center_gate'],
         )
-        result = results[0]
-
-        boxes = build_result_boxes(
-            result=result,
-            image_width=orig_w,
-            image_height=orig_h,
-            object_score_threshold=object_score_threshold,
-            attribute_score_threshold=attribute_score_threshold,
-            keypoint_threshold=keypoint_threshold,
-            disable_generation_identification_mode=args.disable_generation_identification_mode,
-            disable_gender_identification_mode=args.disable_gender_identification_mode,
-            disable_left_and_right_hand_identification_mode=args.disable_left_and_right_hand_identification_mode,
-            disable_headpose_identification_mode=args.disable_headpose_identification_mode,
-        )
-
-        body_source_indices = [box.source_idx for box in boxes if box.classid == BODY_CLASS_ID and box.source_idx >= 0]
-        if use_onnx and args.enable_masks:
-            raw_masks = result.pop('_onnx_masks', None)
-            if raw_masks is not None:
-                result['masks'] = model._resize_selected_mask_map(
-                    raw_masks,
-                    orig_target_sizes[0],
-                    body_source_indices,
-                )
-        if use_onnx and args.enable_contours:
-            raw_contours = result.pop('_onnx_contours', None)
-            if raw_contours is not None:
-                result['contours'] = model._resize_selected_mask_map(
-                    raw_contours,
-                    orig_target_sizes[0],
-                    body_source_indices,
-                )
-
-        rendered = overlay_body_masks(
-            image=image.copy(),
-            result=result,
-            boxes=boxes,
-            mask_threshold=args.mask_threshold,
-            mask_alpha=args.mask_alpha,
-            disable_render_classids=disable_render_classids,
-        )
-        rendered = overlay_body_contours(
-            image=rendered,
-            result=result,
-            boxes=boxes,
-            contour_threshold=args.mask_threshold,
-            disable_render_classids=disable_render_classids,
-        )
-        rendered = draw_detections(
-            image=rendered,
-            boxes=boxes,
-            disable_render_classids=disable_render_classids,
-            keypoint_drawing_mode=args.keypoint_drawing_mode,
-            enable_bone_drawing_mode=args.enable_bone_drawing_mode,
-            enable_face_mosaic=args.enable_face_mosaic,
-            disable_generation_identification_mode=args.disable_generation_identification_mode,
-            disable_gender_identification_mode=args.disable_gender_identification_mode,
-            disable_left_and_right_hand_identification_mode=args.disable_left_and_right_hand_identification_mode,
-            disable_headpose_identification_mode=args.disable_headpose_identification_mode,
-            bounding_box_line_width=args.bounding_box_line_width,
-            enable_head_distance_measurement=not args.disable_head_distance_measurement,
-            camera_horizontal_fov=args.camera_horizontal_fov,
-        )
-        rendered.save(output_dir / image_path.name)
-
-        if args.save_raw_predictions:
-            records = prepare_prediction_payload(
-                boxes=boxes,
-                result=result,
-                mask_threshold=args.mask_threshold,
-                enable_masks=args.enable_masks,
-                enable_contours=args.enable_contours,
+        track_color_cache: Dict[int, np.ndarray] = {}
+        tracking_enabled_prev = runtime_settings['enable_tracking']
+        print(f'Processing {len(image_paths)} images from {images_dir}')
+        for image_path in tqdm(
+            image_paths,
+            desc='Processing images',
+            dynamic_ncols=True,
+            unit='image',
+        ):
+            image = cv2.imread(str(image_path), cv2.IMREAD_COLOR)
+            if image is None:
+                raise FileNotFoundError(f'Failed to read image: {image_path}')
+            rendered, result, boxes, _, tracking_enabled_prev = render_frame_from_input(
+                image=image,
+                model=model,
+                transform=transform,
+                use_onnx=use_onnx,
+                device=device,
+                args=args,
+                runtime_settings=runtime_settings,
+                tracker=tracker,
+                track_color_cache=track_color_cache,
+                tracking_enabled_prev=tracking_enabled_prev,
             )
-            save_predictions_json(output_dir, image_path, records)
+            cv2.imwrite(str(output_dir / image_path.name), rendered)
+
+            if args.save_raw_predictions:
+                records = prepare_prediction_payload(
+                    boxes=boxes,
+                    result=result,
+                    mask_threshold=args.mask_threshold,
+                    enable_masks=args.enable_masks,
+                    enable_contours=args.enable_contours,
+                )
+                save_predictions_json(output_dir, image_path, records)
+        return
+
+    print(f'Processing video source: {video}')
+    cap = cv2.VideoCapture(int(video) if is_parsable_to_int(video) else video)
+    if not cap.isOpened():
+        raise RuntimeError(f'Failed to open video source: {video}')
+
+    tracker = SimpleSortTracker(
+        iou_threshold=runtime_settings['tracking_iou_threshold'],
+        max_age=runtime_settings['tracking_max_age'],
+        min_score=runtime_settings['tracking_min_score'],
+        center_gate=runtime_settings['tracking_center_gate'],
+    )
+    track_color_cache: Dict[int, np.ndarray] = {}
+    tracking_enabled_prev = runtime_settings['enable_tracking']
+    video_writer = None
+    frame_index = 0
+
+    try:
+        while True:
+            ok, frame = cap.read()
+            if not ok:
+                break
+            frame_index += 1
+
+            image = frame
+            rendered, result, boxes, elapsed_time, tracking_enabled_prev = render_frame_from_input(
+                image=image,
+                model=model,
+                transform=transform,
+                use_onnx=use_onnx,
+                device=device,
+                args=args,
+                runtime_settings=runtime_settings,
+                tracker=tracker,
+                track_color_cache=track_color_cache,
+                tracking_enabled_prev=tracking_enabled_prev,
+            )
+
+            debug_image = rendered.copy()
+            cv2.putText(debug_image, f'{elapsed_time * 1000:.2f} ms', (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2, cv2.LINE_AA)
+            cv2.putText(debug_image, f'{elapsed_time * 1000:.2f} ms', (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 255), 1, cv2.LINE_AA)
+
+            if video_writer is None and not args.disable_video_writer:
+                fps = cap.get(cv2.CAP_PROP_FPS)
+                video_writer = create_video_writer(output_dir, debug_image.shape[1], debug_image.shape[0], fps)
+
+            if video_writer is not None:
+                video_writer.write(debug_image)
+
+            if args.save_raw_predictions:
+                records = prepare_prediction_payload(
+                    boxes=boxes,
+                    result=result,
+                    mask_threshold=args.mask_threshold,
+                    enable_masks=args.enable_masks,
+                    enable_contours=args.enable_contours,
+                )
+                save_stream_predictions(output_dir, frame_index, records)
+
+            cv2.imshow('DEIMv2 WholeBody40', debug_image)
+
+            key = cv2.waitKey(1) & 0xFF
+            if key == ord('\x1b'):
+                break
+            if key == ord('b'):
+                runtime_settings['enable_bone_drawing_mode'] = not runtime_settings['enable_bone_drawing_mode']
+            elif key == ord('n'):
+                runtime_settings['disable_generation_identification_mode'] = not runtime_settings['disable_generation_identification_mode']
+            elif key == ord('g'):
+                runtime_settings['disable_gender_identification_mode'] = not runtime_settings['disable_gender_identification_mode']
+            elif key == ord('p'):
+                runtime_settings['disable_headpose_identification_mode'] = not runtime_settings['disable_headpose_identification_mode']
+            elif key == ord('h'):
+                runtime_settings['disable_left_and_right_hand_identification_mode'] = not runtime_settings['disable_left_and_right_hand_identification_mode']
+            elif key == ord('k'):
+                if runtime_settings['keypoint_drawing_mode'] == 'dot':
+                    runtime_settings['keypoint_drawing_mode'] = 'box'
+                elif runtime_settings['keypoint_drawing_mode'] == 'box':
+                    runtime_settings['keypoint_drawing_mode'] = 'both'
+                else:
+                    runtime_settings['keypoint_drawing_mode'] = 'dot'
+            elif key == ord('r'):
+                runtime_settings['enable_tracking'] = not runtime_settings['enable_tracking']
+                if runtime_settings['enable_tracking'] and not runtime_settings['enable_trackid_overlay']:
+                    runtime_settings['enable_trackid_overlay'] = True
+            elif key == ord('t'):
+                runtime_settings['enable_trackid_overlay'] = not runtime_settings['enable_trackid_overlay']
+                if not runtime_settings['enable_tracking']:
+                    runtime_settings['enable_trackid_overlay'] = False
+            elif key == ord('m'):
+                runtime_settings['enable_head_distance_measurement'] = not runtime_settings['enable_head_distance_measurement']
+    finally:
+        cap.release()
+        if video_writer is not None:
+            video_writer.release()
+        cv2.destroyAllWindows()
 
 
 def parse_args():
@@ -1335,11 +2034,15 @@ def parse_args():
     parser = argparse.ArgumentParser()
     parser.add_argument('-c', '--config', type=str, default=DEFAULT_CONFIG)
     parser.add_argument('-r', '--resume', type=str, required=True)
-    parser.add_argument('-i', '--images_dir', type=str, required=True)
+    input_group = parser.add_mutually_exclusive_group(required=True)
+    input_group.add_argument('-i', '--images_dir', type=str)
+    input_group.add_argument('-v', '--video', type=str, help='Video file path or camera index.')
     parser.add_argument('-o', '--output_dir', type=str, required=True)
     parser.add_argument('-d', '--device', type=str, default=None)
     parser.add_argument('--inference_type', type=str, choices=['fp16', 'int8'], default='fp16')
-    parser.add_argument('--score_threshold', type=float, default=0.35)
+    parser.add_argument('--disable_video_writer', action='store_true')
+    parser.add_argument('--disable_waitKey', action='store_true')
+    parser.add_argument('--score_threshold', type=float, default=0.50)
     parser.add_argument('--object_score_threshold', '--object_socre_threshold', dest='object_score_threshold', type=float, default=None)
     parser.add_argument('--attribute_score_threshold', '--attribute_socre_threshold', dest='attribute_score_threshold', type=float, default=None)
     parser.add_argument('--keypoint_threshold', type=float, default=None)
@@ -1356,6 +2059,12 @@ def parse_args():
     parser.add_argument('--disable_headpose_identification_mode', action='store_true')
     parser.add_argument('--disable_render_classids', type=int, nargs='*', default=[])
     parser.add_argument('--enable_face_mosaic', action='store_true')
+    parser.add_argument('--disable_tracking', action='store_true')
+    parser.add_argument('--disable_trackid_overlay', action='store_true')
+    parser.add_argument('--tracking_iou_threshold', type=float, default=0.20)
+    parser.add_argument('--tracking_max_age', type=int, default=45)
+    parser.add_argument('--tracking_min_score', type=float, default=0.45)
+    parser.add_argument('--tracking_center_gate', type=float, default=0.25)
     parser.add_argument('--disable_head_distance_measurement', action='store_true')
     parser.add_argument('--bounding_box_line_width', type=check_positive, default=2)
     parser.add_argument('--camera_horizontal_fov', type=int, default=90)
