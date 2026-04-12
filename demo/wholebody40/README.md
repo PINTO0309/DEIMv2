@@ -120,8 +120,9 @@ uv run python demo/wholebody40/demo_deimv2_torch_wholebody40_ins.py \
 - Saves rendered outputs to `-o/--output_dir` while preserving the original filenames.
 - By default, it draws bounding boxes for all 40 classes and overlays a semi-transparent mask only for body predictions (`classid=0`).
 - Body mask resize uses `center` origin by default. You can compare against the legacy behavior with `--mask_resize_origin topleft`.
+- `--mask_bilateral_d`, `--mask_bilateral_sigma_color`, and `--mask_bilateral_sigma_space` optionally smooth body mask probabilities before thresholding, which can reduce small holes in the rendered body mask.
 - If you specify `--disable_render_classids 0`, both the body bounding box and the body mask are hidden.
-- If you add `--save_raw_predictions`, the script saves `labels/scores/boxes` and body `mask_area/mask_bbox` to `predictions/*.json`.
+- If you add `--save_raw_predictions`, the script saves `labels/scores/boxes` and body `mask_area/mask_bbox` to `predictions/*.json`, using the same body-mask postprocessing as the rendered output.
 
 ### Mask head comparison configs
 For `wholebody40` instance segmentation, the following standalone configs are available for comparing `DEIMTransformer.mask_embed_head_hidden_dim` and `mask_embed_head_num_layers`.

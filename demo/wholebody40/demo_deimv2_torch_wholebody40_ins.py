@@ -745,6 +745,9 @@ def prepare_prediction_payload(
     mask_threshold: float,
     enable_masks: bool,
     enable_contours: bool,
+    mask_bilateral_d: int = 0,
+    mask_bilateral_sigma_color: float = 1.0,
+    mask_bilateral_sigma_space: float = 3.0,
 ) -> List[Dict[str, object]]:
     masks = result.get('masks') if enable_masks else None
     if masks is not None and torch.is_tensor(masks):
@@ -769,6 +772,12 @@ def prepare_prediction_payload(
         if masks is not None and box.classid == BODY_CLASS_ID and box.source_idx >= 0:
             mask_probs = lookup_mask_probs(masks, box.source_idx)
             if mask_probs is not None:
+                mask_probs = postprocess_body_mask_probs(
+                    mask_probs,
+                    bilateral_d=mask_bilateral_d,
+                    bilateral_sigma_color=mask_bilateral_sigma_color,
+                    bilateral_sigma_space=mask_bilateral_sigma_space,
+                )
                 binary_mask = mask_probs >= mask_threshold
                 binary_mask = clip_binary_mask_to_box(binary_mask, box)
                 mask_bbox = binary_mask_bbox(binary_mask)
@@ -815,6 +824,24 @@ def lookup_mask_probs(
     if mask_array.ndim == 3:
         return mask_array[0]
     return mask_array
+
+
+def postprocess_body_mask_probs(
+    mask_probs: np.ndarray,
+    bilateral_d: int = 0,
+    bilateral_sigma_color: float = 1.0,
+    bilateral_sigma_space: float = 3.0,
+) -> np.ndarray:
+    if bilateral_d <= 1 or bilateral_sigma_color <= 0.0 or bilateral_sigma_space <= 0.0:
+        return mask_probs
+
+    filtered = cv2.bilateralFilter(
+        np.ascontiguousarray(mask_probs, dtype=np.float32),
+        bilateral_d,
+        bilateral_sigma_color,
+        bilateral_sigma_space,
+    )
+    return np.clip(filtered, 0.0, 1.0)
 
 
 def clip_binary_mask_to_box(
@@ -866,6 +893,7 @@ def overlay_body_masks(
     image: np.ndarray,
     result: Dict[str, torch.Tensor],
     boxes: List[Box],
+    args,
     mask_threshold: float,
     mask_alpha: int,
     disable_render_classids: set[int],
@@ -887,6 +915,12 @@ def overlay_body_masks(
         mask_probs = lookup_mask_probs(masks, box.source_idx)
         if mask_probs is None:
             continue
+        mask_probs = postprocess_body_mask_probs(
+            mask_probs,
+            bilateral_d=args.mask_bilateral_d,
+            bilateral_sigma_color=args.mask_bilateral_sigma_color,
+            bilateral_sigma_space=args.mask_bilateral_sigma_space,
+        )
         binary_mask = mask_probs >= mask_threshold
         if not binary_mask.any():
             continue
@@ -1730,6 +1764,7 @@ def render_frame(
         image=image.copy(),
         result=result,
         boxes=boxes,
+        args=args,
         mask_threshold=args.mask_threshold,
         mask_alpha=args.mask_alpha,
         disable_render_classids=runtime_settings['disable_render_classids'],
@@ -1866,6 +1901,13 @@ def process_images(args) -> None:
     print(f'Mask resize origin: {args.mask_resize_origin}')
     print(f'Enable masks: {args.enable_masks}')
     print(f'Enable contours: {args.enable_contours}')
+    if args.mask_bilateral_d > 1 and args.mask_bilateral_sigma_color > 0.0 and args.mask_bilateral_sigma_space > 0.0:
+        print(
+            'Body mask bilateral filter: '
+            f'd={args.mask_bilateral_d}, '
+            f'sigma_color={args.mask_bilateral_sigma_color}, '
+            f'sigma_space={args.mask_bilateral_sigma_space}'
+        )
     if image_paths is not None:
         tracker = SimpleSortTracker(
             iou_threshold=runtime_settings['tracking_iou_threshold'],
@@ -1906,6 +1948,9 @@ def process_images(args) -> None:
                     mask_threshold=args.mask_threshold,
                     enable_masks=args.enable_masks,
                     enable_contours=args.enable_contours,
+                    mask_bilateral_d=args.mask_bilateral_d,
+                    mask_bilateral_sigma_color=args.mask_bilateral_sigma_color,
+                    mask_bilateral_sigma_space=args.mask_bilateral_sigma_space,
                 )
                 save_predictions_json(output_dir, image_path, records)
         return
@@ -1965,6 +2010,9 @@ def process_images(args) -> None:
                     mask_threshold=args.mask_threshold,
                     enable_masks=args.enable_masks,
                     enable_contours=args.enable_contours,
+                    mask_bilateral_d=args.mask_bilateral_d,
+                    mask_bilateral_sigma_color=args.mask_bilateral_sigma_color,
+                    mask_bilateral_sigma_space=args.mask_bilateral_sigma_space,
                 )
                 save_stream_predictions(output_dir, frame_index, records)
 
@@ -2037,6 +2085,9 @@ def parse_args():
     parser.add_argument('--keypoint_threshold', type=float, default=None)
     parser.add_argument('--mask_threshold', type=float, default=0.4)
     parser.add_argument('--mask_alpha', type=check_alpha, default=160)
+    parser.add_argument('--mask_bilateral_d', type=int, default=0)
+    parser.add_argument('--mask_bilateral_sigma_color', type=float, default=1.0)
+    parser.add_argument('--mask_bilateral_sigma_space', type=float, default=3.0)
     parser.add_argument('--mask_resize_origin', type=str, choices=['topleft', 'center'], default='topleft')
     parser.add_argument('--enable-masks', action='store_true')
     parser.add_argument('--enable-contours', action='store_true')
