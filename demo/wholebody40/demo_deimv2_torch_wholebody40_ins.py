@@ -770,6 +770,7 @@ def prepare_prediction_payload(
             mask_probs = lookup_mask_probs(masks, box.source_idx)
             if mask_probs is not None:
                 binary_mask = mask_probs >= mask_threshold
+                binary_mask = clip_binary_mask_to_box(binary_mask, box)
                 mask_bbox = binary_mask_bbox(binary_mask)
                 if mask_bbox is not None:
                     record['mask_area'] = int(binary_mask.sum())
@@ -779,6 +780,7 @@ def prepare_prediction_payload(
             contour_probs = lookup_mask_probs(contours, box.source_idx)
             if contour_probs is not None:
                 binary_contour = contour_probs >= mask_threshold
+                binary_contour = clip_binary_mask_to_box(binary_contour, box)
                 contour_bbox = binary_mask_bbox(binary_contour)
                 if contour_bbox is not None:
                     record['contour_area'] = int(binary_contour.sum())
@@ -815,62 +817,49 @@ def lookup_mask_probs(
     return mask_array
 
 
-def cleanup_outside_isolated_body_mask_pixels(
+def clip_binary_mask_to_box(
     binary_mask: np.ndarray,
     box: Box,
     padding: int = MASK_CLEANUP_PADDING,
 ) -> np.ndarray:
-    mask_bbox = binary_mask_bbox(binary_mask)
-    if mask_bbox is None:
+    if binary_mask.size == 0:
         return binary_mask
 
     image_height, image_width = binary_mask.shape[:2]
-    seed_x1 = max(0, box.x1 - padding)
-    seed_y1 = max(0, box.y1 - padding)
-    seed_x2 = min(image_width - 1, box.x2 + padding)
-    seed_y2 = min(image_height - 1, box.y2 + padding)
+    clip_x1 = max(0, box.x1 - padding)
+    clip_y1 = max(0, box.y1 - padding)
+    clip_x2 = min(image_width - 1, box.x2 + padding)
+    clip_y2 = min(image_height - 1, box.y2 + padding)
 
-    mask_x1, mask_y1, mask_x2, mask_y2 = mask_bbox
-    if mask_x1 >= seed_x1 and mask_y1 >= seed_y1 and mask_x2 <= seed_x2 and mask_y2 <= seed_y2:
+    if (
+        clip_x1 == 0 and clip_y1 == 0
+        and clip_x2 == image_width - 1 and clip_y2 == image_height - 1
+    ):
         return binary_mask
 
-    roi_x1 = max(0, min(mask_x1, seed_x1) - padding)
-    roi_y1 = max(0, min(mask_y1, seed_y1) - padding)
-    roi_x2 = min(image_width - 1, max(mask_x2, seed_x2) + padding)
-    roi_y2 = min(image_height - 1, max(mask_y2, seed_y2) + padding)
+    has_outside_pixels = False
+    if clip_y1 > 0 and binary_mask[:clip_y1, :].any():
+        has_outside_pixels = True
+    elif clip_y2 + 1 < image_height and binary_mask[clip_y2 + 1:, :].any():
+        has_outside_pixels = True
+    elif clip_x1 > 0 and binary_mask[:, :clip_x1].any():
+        has_outside_pixels = True
+    elif clip_x2 + 1 < image_width and binary_mask[:, clip_x2 + 1:].any():
+        has_outside_pixels = True
 
-    roi_mask = np.ascontiguousarray(
-        binary_mask[roi_y1:roi_y2 + 1, roi_x1:roi_x2 + 1].astype(np.uint8, copy=False)
-    )
-    if not roi_mask.any():
+    if not has_outside_pixels:
         return binary_mask
 
-    seed_rel_x1 = seed_x1 - roi_x1
-    seed_rel_y1 = seed_y1 - roi_y1
-    seed_rel_x2 = seed_x2 - roi_x1
-    seed_rel_y2 = seed_y2 - roi_y1
-
-    seed_positive = roi_mask[seed_rel_y1:seed_rel_y2 + 1, seed_rel_x1:seed_rel_x2 + 1]
-    if not seed_positive.any():
-        return binary_mask
-
-    num_labels, labels = cv2.connectedComponents(roi_mask, connectivity=8)
-    if num_labels <= 2:
-        return binary_mask
-
-    seed_region = np.zeros(roi_mask.shape, dtype=bool)
-    seed_region[seed_rel_y1:seed_rel_y2 + 1, seed_rel_x1:seed_rel_x2 + 1] = True
-    keep_labels = np.unique(labels[seed_region & (roi_mask > 0)])
-    if keep_labels.size == 0:
-        return binary_mask
-
-    cleaned_roi = np.isin(labels, keep_labels)
-    if np.array_equal(cleaned_roi, roi_mask.astype(bool, copy=False)):
-        return binary_mask
-
-    cleaned_mask = binary_mask.copy()
-    cleaned_mask[roi_y1:roi_y2 + 1, roi_x1:roi_x2 + 1] = cleaned_roi
-    return cleaned_mask
+    clipped_mask = binary_mask.copy()
+    if clip_y1 > 0:
+        clipped_mask[:clip_y1, :] = False
+    if clip_y2 + 1 < image_height:
+        clipped_mask[clip_y2 + 1:, :] = False
+    if clip_x1 > 0:
+        clipped_mask[:, :clip_x1] = False
+    if clip_x2 + 1 < image_width:
+        clipped_mask[:, clip_x2 + 1:] = False
+    return clipped_mask
 
 
 def overlay_body_masks(
@@ -901,7 +890,7 @@ def overlay_body_masks(
         binary_mask = mask_probs >= mask_threshold
         if not binary_mask.any():
             continue
-        binary_mask = cleanup_outside_isolated_body_mask_pixels(binary_mask, box)
+        binary_mask = clip_binary_mask_to_box(binary_mask, box)
         cached_color = track_color_cache.get(box.track_id) if track_color_cache is not None and box.track_id > 0 else None
         if isinstance(cached_color, np.ndarray):
             instance_color = tuple(int(np.clip(v, 0, 255)) for v in cached_color.tolist())
@@ -943,7 +932,7 @@ def overlay_body_contours(
         contour_probs = lookup_mask_probs(contours, box.source_idx)
         if contour_probs is None:
             continue
-        binary_contour = (contour_probs >= contour_threshold).astype(np.uint8)
+        binary_contour = clip_binary_mask_to_box(contour_probs >= contour_threshold, box).astype(np.uint8)
         if not binary_contour.any():
             continue
 
@@ -2044,7 +2033,7 @@ def parse_args():
     parser.add_argument('--disable_waitKey', action='store_true')
     parser.add_argument('--score_threshold', type=float, default=0.50)
     parser.add_argument('--object_score_threshold', '--object_socre_threshold', dest='object_score_threshold', type=float, default=None)
-    parser.add_argument('--attribute_score_threshold', '--attribute_socre_threshold', dest='attribute_score_threshold', type=float, default=None)
+    parser.add_argument('--attribute_score_threshold', '--attribute_socre_threshold', dest='attribute_score_threshold', type=float, default=0.75)
     parser.add_argument('--keypoint_threshold', type=float, default=None)
     parser.add_argument('--mask_threshold', type=float, default=0.4)
     parser.add_argument('--mask_alpha', type=check_alpha, default=160)
