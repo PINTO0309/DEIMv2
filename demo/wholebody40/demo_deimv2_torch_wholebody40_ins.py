@@ -3,6 +3,8 @@ PyTorch checkpoint demo for DEIMv2 wholebody40 instance segmentation.
 """
 
 import argparse
+import copy
+import importlib
 import json
 import math
 import os
@@ -19,11 +21,9 @@ import cv2
 import numpy as np
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
+import yaml
 from tqdm import tqdm
-
-sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '../..')))
-from engine.core import YAMLConfig
-from engine.misc.mask_resize import resize_masks
 
 
 AVERAGE_HEAD_WIDTH: float = 0.16 + 0.10
@@ -77,6 +77,325 @@ SIDE_PARENT_TO_CHILDREN = {
 LEFT_SIDE_COLOR = (0, 128, 0)
 RIGHT_SIDE_COLOR = (255, 0, 255)
 MASK_CLEANUP_PADDING = 1
+INCLUDE_KEY = '__include__'
+_CENTER_GRID_CACHE: dict[tuple[int, int, int, int, tuple[str, int], torch.dtype], torch.Tensor] = {}
+_CENTER_INDEX_CACHE: dict[tuple[int, int, int, int, tuple[str, int]], tuple[torch.Tensor, torch.Tensor]] = {}
+_ENGINE_CREATE: Optional[Callable[..., Any]] = None
+_ENGINE_GLOBAL_CONFIG: Optional[Dict[str, Any]] = None
+
+
+def merge_dict(dct: Dict[str, Any], another_dct: Dict[str, Any], inplace: bool = True) -> Dict[str, Any]:
+    def _merge(base: Dict[str, Any], extra: Dict[str, Any]) -> Dict[str, Any]:
+        for key in extra:
+            if key in base and isinstance(base[key], dict) and isinstance(extra[key], dict):
+                _merge(base[key], extra[key])
+            else:
+                base[key] = extra[key]
+        return base
+
+    target = dct if inplace else copy.deepcopy(dct)
+    return _merge(target, another_dct)
+
+
+def load_config(file_path: str | Path, cfg: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+    resolved_path = Path(file_path)
+    if resolved_path.suffix.lower() not in {'.yml', '.yaml'}:
+        raise ValueError(f'Only YAML configs are supported: {resolved_path}')
+
+    config = {} if cfg is None else cfg
+    with resolved_path.open('r', encoding='utf-8') as file:
+        file_cfg = yaml.safe_load(file) or {}
+
+    if INCLUDE_KEY in file_cfg:
+        for base_yaml in list(file_cfg[INCLUDE_KEY]):
+            base_path = Path(base_yaml).expanduser()
+            if not base_path.is_absolute():
+                base_path = resolved_path.parent / base_path
+            base_cfg = load_config(base_path, config)
+            merge_dict(config, base_cfg)
+
+    return merge_dict(config, file_cfg)
+
+
+def merge_config(
+    cfg: Dict[str, Any],
+    another_cfg: Optional[Dict[str, Any]] = None,
+    inplace: bool = False,
+    overwrite: bool = False,
+) -> Dict[str, Any]:
+    source = {} if another_cfg is None else another_cfg
+
+    def _merge(base: Dict[str, Any], extra: Dict[str, Any]) -> Dict[str, Any]:
+        for key in extra:
+            if key not in base:
+                base[key] = extra[key]
+            elif isinstance(base[key], dict) and isinstance(extra[key], dict):
+                _merge(base[key], extra[key])
+            elif overwrite:
+                base[key] = extra[key]
+        return base
+
+    target = cfg if inplace else copy.deepcopy(cfg)
+    return _merge(target, source)
+
+
+def load_engine_factory() -> tuple[Callable[..., Any], Dict[str, Any]]:
+    global _ENGINE_CREATE, _ENGINE_GLOBAL_CONFIG
+    if _ENGINE_CREATE is not None and _ENGINE_GLOBAL_CONFIG is not None:
+        return _ENGINE_CREATE, _ENGINE_GLOBAL_CONFIG
+
+    repo_root = Path(__file__).resolve().parents[2]
+    repo_root_str = str(repo_root)
+    if repo_root_str not in sys.path:
+        sys.path.insert(0, repo_root_str)
+
+    importlib.import_module('engine')
+    workspace = importlib.import_module('engine.core.workspace')
+    _ENGINE_CREATE = workspace.create
+    _ENGINE_GLOBAL_CONFIG = workspace.GLOBAL_CONFIG
+    return _ENGINE_CREATE, _ENGINE_GLOBAL_CONFIG
+
+
+class InferenceConfig:
+    def __init__(self, cfg_path: str, **kwargs: Any) -> None:
+        cfg = load_config(cfg_path)
+        cfg = merge_dict(cfg, kwargs)
+        self.yaml_cfg = copy.deepcopy(cfg)
+        self._model: Optional[nn.Module] = None
+        self._postprocessor: Optional[nn.Module] = None
+
+    @property
+    def global_cfg(self) -> Dict[str, Any]:
+        _, engine_global_config = load_engine_factory()
+        return merge_config(self.yaml_cfg, another_cfg=engine_global_config, inplace=False, overwrite=False)
+
+    @property
+    def model(self) -> nn.Module:
+        if self._model is None and 'model' in self.yaml_cfg:
+            create, _ = load_engine_factory()
+            self._model = create(self.yaml_cfg['model'], self.global_cfg)
+        return self._model
+
+    @property
+    def postprocessor(self) -> nn.Module:
+        if self._postprocessor is None and 'postprocessor' in self.yaml_cfg:
+            create, _ = load_engine_factory()
+            self._postprocessor = create(self.yaml_cfg['postprocessor'], self.global_cfg)
+        return self._postprocessor
+
+
+def compute_resized_mask_output_size(
+    spatial_size: Sequence[int],
+    size: int | Sequence[int],
+    max_size: int | None = None,
+) -> tuple[int, int]:
+    if len(spatial_size) != 2:
+        raise ValueError(f'Expected spatial_size=(height, width), got {spatial_size}')
+
+    height, width = int(spatial_size[0]), int(spatial_size[1])
+    if isinstance(size, int):
+        target_size = int(size)
+        if max_size is not None:
+            min_original_size = float(min(width, height))
+            max_original_size = float(max(width, height))
+            if max_original_size / min_original_size * target_size > max_size:
+                target_size = int(round(max_size * min_original_size / max_original_size))
+
+        if (width <= height and width == target_size) or (height <= width and height == target_size):
+            return height, width
+
+        if width < height:
+            out_width = target_size
+            out_height = int(target_size * height / width)
+        else:
+            out_height = target_size
+            out_width = int(target_size * width / height)
+        return out_height, out_width
+
+    if len(size) == 1:
+        return compute_resized_mask_output_size(spatial_size, int(size[0]), max_size=max_size)
+
+    if len(size) != 2:
+        raise ValueError(f'Expected size to have length 1 or 2, got {size}')
+
+    return int(size[0]), int(size[1])
+
+
+def _cache_device_key(device: torch.device) -> tuple[str, int]:
+    return device.type, -1 if device.index is None else device.index
+
+
+def _compute_center_source_coords(
+    in_height: int,
+    in_width: int,
+    out_height: int,
+    out_width: int,
+    *,
+    device: torch.device,
+    dtype: torch.dtype,
+) -> tuple[torch.Tensor, torch.Tensor]:
+    y_coords = (
+        (torch.arange(out_height, device=device, dtype=dtype) + 0.5) - (out_height / 2.0)
+    ) * (in_height / out_height) + (in_height / 2.0)
+    x_coords = (
+        (torch.arange(out_width, device=device, dtype=dtype) + 0.5) - (out_width / 2.0)
+    ) * (in_width / out_width) + (in_width / 2.0)
+
+    y_coords = y_coords.clamp(0.0, float(max(in_height - 1, 0)))
+    x_coords = x_coords.clamp(0.0, float(max(in_width - 1, 0)))
+    return y_coords, x_coords
+
+
+def _build_center_resize_grid(
+    in_height: int,
+    in_width: int,
+    out_height: int,
+    out_width: int,
+    *,
+    device: torch.device,
+    dtype: torch.dtype,
+) -> torch.Tensor:
+    y_coords, x_coords = _compute_center_source_coords(
+        in_height,
+        in_width,
+        out_height,
+        out_width,
+        device=device,
+        dtype=dtype,
+    )
+
+    if in_height > 1:
+        y_norm = (y_coords / (in_height - 1)) * 2.0 - 1.0
+    else:
+        y_norm = torch.zeros_like(y_coords)
+    if in_width > 1:
+        x_norm = (x_coords / (in_width - 1)) * 2.0 - 1.0
+    else:
+        x_norm = torch.zeros_like(x_coords)
+
+    grid_y = y_norm[:, None].expand(out_height, out_width)
+    grid_x = x_norm[None, :].expand(out_height, out_width)
+    return torch.stack((grid_x, grid_y), dim=-1)
+
+
+def _get_center_resize_grid(
+    in_height: int,
+    in_width: int,
+    out_height: int,
+    out_width: int,
+    *,
+    device: torch.device,
+    dtype: torch.dtype,
+) -> torch.Tensor:
+    key = (in_height, in_width, out_height, out_width, _cache_device_key(device), dtype)
+    grid = _CENTER_GRID_CACHE.get(key)
+    if grid is None:
+        grid = _build_center_resize_grid(
+            in_height,
+            in_width,
+            out_height,
+            out_width,
+            device=device,
+            dtype=dtype,
+        )
+        _CENTER_GRID_CACHE[key] = grid
+    return grid
+
+
+def _get_center_resize_indices(
+    in_height: int,
+    in_width: int,
+    out_height: int,
+    out_width: int,
+    *,
+    device: torch.device,
+) -> tuple[torch.Tensor, torch.Tensor]:
+    key = (in_height, in_width, out_height, out_width, _cache_device_key(device))
+    indices = _CENTER_INDEX_CACHE.get(key)
+    if indices is None:
+        y_coords, x_coords = _compute_center_source_coords(
+            in_height,
+            in_width,
+            out_height,
+            out_width,
+            device=device,
+            dtype=torch.float32,
+        )
+        indices = (y_coords.round().to(torch.int64), x_coords.round().to(torch.int64))
+        _CENTER_INDEX_CACHE[key] = indices
+    return indices
+
+
+def resize_masks(
+    masks: torch.Tensor,
+    size: int | Sequence[int],
+    *,
+    max_size: int | None = None,
+    mode: str = 'nearest',
+    origin: str = 'center',
+) -> torch.Tensor:
+    if masks.ndim != 4:
+        raise ValueError(f'Expected masks with shape [N, C, H, W], got {tuple(masks.shape)}')
+
+    out_height, out_width = compute_resized_mask_output_size(masks.shape[-2:], size=size, max_size=max_size)
+    in_height, in_width = masks.shape[-2:]
+    if (in_height, in_width) == (out_height, out_width):
+        return masks
+
+    if origin == 'center' and mode in ('nearest', 'nearest-exact'):
+        y_index, x_index = _get_center_resize_indices(
+            in_height,
+            in_width,
+            out_height,
+            out_width,
+            device=masks.device,
+        )
+        return masks.index_select(-2, y_index).index_select(-1, x_index)
+
+    original_dtype = masks.dtype
+    needs_float = (not torch.is_floating_point(masks)) or mode == 'bilinear' or (
+        masks.device.type == 'cpu' and masks.dtype in (torch.float16, torch.bfloat16)
+    )
+    work_masks = masks.float() if needs_float else masks
+
+    if origin == 'topleft':
+        align_corners = False if mode == 'bilinear' else None
+        resized = F.interpolate(
+            work_masks,
+            size=(out_height, out_width),
+            mode=mode,
+            align_corners=align_corners,
+        )
+    elif origin == 'center':
+        grid = _get_center_resize_grid(
+            in_height,
+            in_width,
+            out_height,
+            out_width,
+            device=work_masks.device,
+            dtype=work_masks.dtype,
+        )
+        grid = grid.unsqueeze(0).expand(work_masks.shape[0], -1, -1, -1)
+        resized = F.grid_sample(
+            work_masks,
+            grid,
+            mode='bilinear',
+            padding_mode='zeros',
+            align_corners=True,
+        )
+    else:
+        raise ValueError(f'Unsupported mask resize origin: {origin}')
+
+    if original_dtype == torch.bool:
+        return resized > 0.5
+
+    if torch.is_floating_point(torch.empty((), dtype=original_dtype)):
+        return resized.to(dtype=original_dtype) if resized.dtype != original_dtype else resized
+
+    if mode in ('nearest', 'nearest-exact'):
+        return resized.round().to(dtype=original_dtype)
+
+    return resized
 
 
 @dataclass(frozen=False)
@@ -430,6 +749,10 @@ def resolve_device(device_arg: str | None) -> torch.device:
 
 def is_onnx_model(model_path: Path) -> bool:
     return model_path.suffix.lower() == '.onnx'
+
+
+def is_torch_checkpoint_model(model_path: Path) -> bool:
+    return model_path.suffix.lower() in {'.pt', '.pth'}
 
 
 def build_onnx_providers(device_arg: str | None, model_path: Path, inference_type: str):
@@ -1400,7 +1723,7 @@ def draw_detections(
 class InferenceModel(nn.Module):
     def __init__(
         self,
-        cfg: YAMLConfig,
+        cfg: InferenceConfig,
         state_dict: Dict[str, torch.Tensor],
         device: torch.device,
         mask_resize_origin: str = 'topleft',
@@ -1611,6 +1934,7 @@ def save_predictions_json_by_name(output_dir: Path, item_name: str, item_stem: s
 
 def initialize_model(args, config_path: Path, resume_path: Path):
     use_onnx = is_onnx_model(resume_path)
+    use_torch_checkpoint = is_torch_checkpoint_model(resume_path)
     device: Optional[torch.device] = None
 
     if use_onnx:
@@ -1624,10 +1948,10 @@ def initialize_model(args, config_path: Path, resume_path: Path):
             model.image_size,
             normalize=infer_onnx_normalize_from_model_path(resume_path),
         )
-    else:
+    elif use_torch_checkpoint:
         if (args.device or '').lower() == 'tensorrt':
             raise ValueError('TensorRT inference is only supported when --resume points to an ONNX model.')
-        cfg = YAMLConfig(str(config_path), resume=str(resume_path))
+        cfg = InferenceConfig(str(config_path), resume=str(resume_path))
         if 'HGNetv2' in cfg.yaml_cfg:
             cfg.yaml_cfg['HGNetv2']['pretrained'] = False
         if 'DINOv3STAs' in cfg.yaml_cfg:
@@ -1639,6 +1963,11 @@ def initialize_model(args, config_path: Path, resume_path: Path):
         image_size = cfg.yaml_cfg['eval_spatial_size']
         normalize = bool(cfg.yaml_cfg.get('DINOv3STAs', False))
         transform = build_transform(image_size, normalize)
+    else:
+        raise ValueError(
+            f'Unsupported model file extension: {resume_path.suffix or "<none>"}. '
+            'Supported extensions are .onnx, .pt, and .pth.'
+        )
 
     return model, transform, use_onnx, device
 
@@ -1873,10 +2202,11 @@ def process_images(args) -> None:
     output_dir = Path(args.output_dir)
     video = args.video
     use_onnx = is_onnx_model(resume_path)
+    use_torch_checkpoint = is_torch_checkpoint_model(resume_path)
 
     if not resume_path.exists():
         raise FileNotFoundError(f'Model file not found: {resume_path}')
-    if not use_onnx and not config_path.exists():
+    if use_torch_checkpoint and not config_path.exists():
         raise FileNotFoundError(f'Config file not found: {config_path}')
     if images_dir is not None:
         if not images_dir.exists() or not images_dir.is_dir():
