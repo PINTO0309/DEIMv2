@@ -102,8 +102,8 @@ You can use either `best_stg2.pth` or `last_full_epoch.pth`. If the checkpoint c
 ### Image folder
 ```bash
 uv run python demo/wholebody40/demo_deimv2_torch_wholebody40_ins.py \
--c configs/deimv2/deimv2_dinov3_x_wholebody40_ins_s08.yml \
--r deimv2_dinov3_x_wholebody40_ins_s08/last_full_epoch.pth \
+-c configs/deimv2/deimv2_dinov3_x_wholebody40_ins_s08_maskhead256x3_center.yml \
+-r ckpts/deimv2_dinov3_x_wholebody40_ins_center.pth \
 -i images_partial \
 -o outputs/demo_wholebody40_torch0_ins_s08 \
 -d cuda \
