@@ -105,7 +105,7 @@ uv run python demo/wholebody40/demo_deimv2_torch_wholebody40_ins.py \
 -c configs/deimv2/deimv2_dinov3_x_wholebody40_ins_s08_maskhead256x3_center.yml \
 -r ckpts/deimv2_dinov3_x_wholebody40_ins_center.pth \
 -i images_partial \
--o outputs/demo_wholebody40_torch0_ins_s08 \
+-o outputs/images_partial \
 -d cuda \
 --score_threshold 0.35 \
 --mask_threshold 0.5 \
