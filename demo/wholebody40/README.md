@@ -113,6 +113,7 @@ uv run python demo/wholebody40/demo_deimv2_torch_wholebody40_ins.py \
 --disable_gender_identification_mode \
 --disable_headpose_identification_mode \
 --disable_head_distance_measurement \
+--disable_tracking \
 --enable-masks
 ```
 
