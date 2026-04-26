@@ -339,6 +339,7 @@ CUDA_VISIBLE_DEVICES=0,1,2,3 torchrun --master_port=7777 --nproc_per_node=4 trai
 CUDA_VISIBLE_DEVICES=0 torchrun --master_port=7777 --nproc_per_node=1 train.py -c configs/deimv2/deimv2_dinov3_x_wholebody34.yml --use-amp --seed=0
 CUDA_VISIBLE_DEVICES=0 torchrun --master_port=7777 --nproc_per_node=1 train.py -c configs/deimv2/deimv2_dinov3_x_wholebody40.yml --use-amp --seed=0
 CUDA_VISIBLE_DEVICES=0 torchrun --master_port=7777 --nproc_per_node=1 train.py -c configs/deimv2/deimv2_dinov3_x_wholebody40_ins_s08_maskhead256x3_center.yml --use-amp --seed=0
+CUDA_VISIBLE_DEVICES=0 torchrun --master_port=7777 --nproc_per_node=1 train.py -c configs/deimv2/deimv2_dinov3_x_wholebody48_ins_s08_maskhead256x3_center.yml --use-amp --seed=0
 
 # for HGNetv2-based variants
 CUDA_VISIBLE_DEVICES=0,1,2,3 torchrun --master_port=7777 --nproc_per_node=4 train.py -c configs/deimv2/deimv2_hgnetv2_${model}_coco.yml --use-amp --seed=0
