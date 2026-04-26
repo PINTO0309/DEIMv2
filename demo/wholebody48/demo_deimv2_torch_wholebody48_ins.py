@@ -51,28 +51,36 @@ EDGES = [
     (22, 36), (22, 36),
     (25, 35),
     (35, 36), (35, 36),
-    (36, 37), (36, 37),
-    (37, 38), (37, 38),
-    (38, 39), (38, 39),
+    (36, 39), (36, 39),
+    (39, 42), (39, 42),
+    (42, 45), (42, 45),
 ]
 
-OBJECT_CLASS_IDS = {0, 5, 6, 7, 16, 17, 18, 19, 20, 32, 33, 34, 39}
+OBJECT_CLASS_IDS = {0, 5, 6, 7, 16, 17, 18, 19, 20, 32, 33, 34, 45, 46, 47}
 ATTRIBUTE_CLASS_IDS = {1, 2, 3, 4, 8, 9, 10, 11, 12, 13, 14, 15}
-KEYPOINT_CLASS_IDS = {21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 35, 36, 37, 38}
-KEYPOINT_CLASS_ID_ORDER = (21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 35, 36, 37, 38)
+KEYPOINT_CLASS_IDS = {
+    21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31,
+    35, 36, 37, 38, 39, 40, 41, 42, 43, 44,
+}
+KEYPOINT_CLASS_ID_ORDER = (21, 22, 25, 26, 29, 35, 36, 39, 42)
 KEYPOINT_DRAW_CLASS_IDS = KEYPOINT_CLASS_IDS
 KEYPOINT_NMS_CLASS_IDS = KEYPOINT_CLASS_ID_ORDER
-SKELETON_KEYPOINT_IDS = {21, 22, 25, 26, 29, 32, 35, 36, 37, 38, 39}
+SKELETON_KEYPOINT_IDS = {21, 22, 25, 26, 29, 32, 35, 36, 39, 42, 45}
 
-LEFT_SIDE_CLASS_IDS = {23, 27, 30, 33}
-RIGHT_SIDE_CLASS_IDS = {24, 28, 31, 34}
+LEFT_SIDE_CLASS_IDS = {23, 27, 30, 33, 37, 40, 43, 46}
+RIGHT_SIDE_CLASS_IDS = {24, 28, 31, 34, 38, 41, 44, 47}
 SIDE_ATTR_CLASS_IDS = LEFT_SIDE_CLASS_IDS | RIGHT_SIDE_CLASS_IDS
 SIDE_PARENT_TO_CHILDREN = {
     22: (23, 24),
     26: (27, 28),
     29: (30, 31),
     32: (33, 34),
+    36: (37, 38),
+    39: (40, 41),
+    42: (43, 44),
+    45: (46, 47),
 }
+SIDE_AWARE_OBJECT_CLASS_IDS = {32, 45}
 
 LEFT_SIDE_COLOR = (0, 128, 0)
 RIGHT_SIDE_COLOR = (255, 0, 255)
@@ -1530,12 +1538,51 @@ def get_render_color(
         color = (0, 0, 255)
     elif classid == 36:
         color = (255, 0, 0)
+        if not disable_left_and_right_hand_identification_mode:
+            if box.handedness == 0:
+                color = LEFT_SIDE_COLOR
+            elif box.handedness == 1:
+                color = RIGHT_SIDE_COLOR
     elif classid == 37:
-        color = (0, 0, 255)
+        color = LEFT_SIDE_COLOR
     elif classid == 38:
-        color = (255, 0, 0)
+        color = RIGHT_SIDE_COLOR
     elif classid == 39:
         color = (250, 0, 136)
+        if not disable_left_and_right_hand_identification_mode:
+            if box.handedness == 0:
+                color = LEFT_SIDE_COLOR
+            elif box.handedness == 1:
+                color = RIGHT_SIDE_COLOR
+    elif classid == 40:
+        color = LEFT_SIDE_COLOR
+    elif classid == 41:
+        color = RIGHT_SIDE_COLOR
+    elif classid == 42:
+        color = (252, 189, 107)
+        if not disable_left_and_right_hand_identification_mode:
+            if box.handedness == 0:
+                color = LEFT_SIDE_COLOR
+            elif box.handedness == 1:
+                color = RIGHT_SIDE_COLOR
+    elif classid == 43:
+        color = LEFT_SIDE_COLOR
+    elif classid == 44:
+        color = RIGHT_SIDE_COLOR
+    elif classid == 45:
+        if not disable_left_and_right_hand_identification_mode:
+            if box.handedness == 0:
+                color = LEFT_SIDE_COLOR
+            elif box.handedness == 1:
+                color = RIGHT_SIDE_COLOR
+            else:
+                color = (0, 255, 0)
+        else:
+            color = (0, 255, 0)
+    elif classid == 46:
+        color = LEFT_SIDE_COLOR
+    elif classid == 47:
+        color = RIGHT_SIDE_COLOR
 
     return color
 
@@ -1552,6 +1599,7 @@ def draw_detections(
     disable_left_and_right_hand_identification_mode: bool,
     disable_headpose_identification_mode: bool,
     bounding_box_line_width: int,
+    keypoint_dot_radius: int,
     enable_head_distance_measurement: bool,
     camera_horizontal_fov: int,
     enable_trackid_overlay: bool = False,
@@ -1577,7 +1625,7 @@ def draw_detections(
         if (
             (classid == 0 and not disable_gender_identification_mode)
             or (classid == 7 and not disable_headpose_identification_mode)
-            or (classid == 32 and not disable_left_and_right_hand_identification_mode)
+            or (classid in SIDE_AWARE_OBJECT_CLASS_IDS and not disable_left_and_right_hand_identification_mode)
             or classid == 16
             or classid in KEYPOINT_DRAW_CLASS_IDS
         ):
@@ -1612,23 +1660,13 @@ def draw_detections(
                     apply_face_mosaic(debug_image, box)
                 cv2.rectangle(debug_image, (box.x1, box.y1), (box.x2, box.y2), (255, 255, 255), white_line_width)
                 cv2.rectangle(debug_image, (box.x1, box.y1), (box.x2, box.y2), color, colored_line_width)
-            elif classid == 32:
-                if box.handedness == -1:
-                    draw_dashed_rectangle(
-                        image=debug_image,
-                        top_left=(box.x1, box.y1),
-                        bottom_right=(box.x2, box.y2),
-                        color=color,
-                        thickness=2,
-                        dash_length=10,
-                    )
-                else:
-                    cv2.rectangle(debug_image, (box.x1, box.y1), (box.x2, box.y2), (255, 255, 255), white_line_width)
-                    cv2.rectangle(debug_image, (box.x1, box.y1), (box.x2, box.y2), color, colored_line_width)
+            elif classid in SIDE_AWARE_OBJECT_CLASS_IDS:
+                cv2.rectangle(debug_image, (box.x1, box.y1), (box.x2, box.y2), (255, 255, 255), white_line_width)
+                cv2.rectangle(debug_image, (box.x1, box.y1), (box.x2, box.y2), color, colored_line_width)
             elif classid in KEYPOINT_DRAW_CLASS_IDS:
                 if keypoint_drawing_mode in ['dot', 'both']:
-                    cv2.circle(debug_image, (box.cx, box.cy), 3, (255, 255, 255), -1)
-                    cv2.circle(debug_image, (box.cx, box.cy), 2, color, -1)
+                    cv2.circle(debug_image, (box.cx, box.cy), keypoint_dot_radius + 1, (255, 255, 255), -1)
+                    cv2.circle(debug_image, (box.cx, box.cy), keypoint_dot_radius, color, -1)
                 if keypoint_drawing_mode in ['box', 'both']:
                     cv2.rectangle(debug_image, (box.x1, box.y1), (box.x2, box.y2), (255, 255, 255), 2)
                     cv2.rectangle(debug_image, (box.x1, box.y1), (box.x2, box.y2), color, 1)
@@ -2119,6 +2157,7 @@ def render_frame(
         disable_left_and_right_hand_identification_mode=runtime_settings['disable_left_and_right_hand_identification_mode'],
         disable_headpose_identification_mode=runtime_settings['disable_headpose_identification_mode'],
         bounding_box_line_width=args.bounding_box_line_width,
+        keypoint_dot_radius=args.keypoint_dot_radius,
         enable_head_distance_measurement=runtime_settings['enable_head_distance_measurement'],
         camera_horizontal_fov=args.camera_horizontal_fov,
         enable_trackid_overlay=runtime_settings['enable_trackid_overlay'],
@@ -2392,6 +2431,12 @@ def parse_args():
             raise argparse.ArgumentTypeError(f'Invalid value: {ivalue}. Please specify an integer of 2 or greater.')
         return ivalue
 
+    def check_positive_radius(value: str) -> int:
+        ivalue = int(value)
+        if ivalue < 1:
+            raise argparse.ArgumentTypeError(f'Invalid value: {ivalue}. Please specify an integer of 1 or greater.')
+        return ivalue
+
     def check_alpha(value: str) -> int:
         ivalue = int(value)
         if not 0 <= ivalue <= 255:
@@ -2422,6 +2467,7 @@ def parse_args():
     parser.add_argument('--enable-masks', action='store_true')
     parser.add_argument('--enable-contours', action='store_true')
     parser.add_argument('--keypoint_drawing_mode', type=str, choices=['dot', 'box', 'both'], default='dot')
+    parser.add_argument('--keypoint_dot_radius', type=check_positive_radius, default=2)
     parser.add_argument('--enable_bone_drawing_mode', action='store_true')
     parser.add_argument('--disable_generation_identification_mode', action='store_true')
     parser.add_argument('--disable_gender_identification_mode', action='store_true')
