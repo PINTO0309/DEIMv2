@@ -80,6 +80,7 @@ SIDE_PARENT_TO_CHILDREN = {
     42: (43, 44),
     45: (46, 47),
 }
+SIDE_AWARE_SKELETON_CLASS_IDS = set(SIDE_PARENT_TO_CHILDREN.keys())
 SIDE_AWARE_OBJECT_CLASS_IDS = {32, 45}
 
 LEFT_SIDE_COLOR = (0, 128, 0)
@@ -1415,9 +1416,16 @@ def draw_dashed_rectangle(
 
 
 def is_handedness_compatible(parent_box: Box, child_box: Box) -> bool:
-    if parent_box.handedness < 0 or child_box.handedness < 0:
-        return True
-    return parent_box.handedness == child_box.handedness
+    parent_side_aware = parent_box.classid in SIDE_AWARE_SKELETON_CLASS_IDS
+    child_side_aware = child_box.classid in SIDE_AWARE_SKELETON_CLASS_IDS
+
+    if parent_side_aware and parent_box.handedness < 0:
+        return False
+    if child_side_aware and child_box.handedness < 0:
+        return False
+    if parent_side_aware and child_side_aware:
+        return parent_box.handedness == child_box.handedness
+    return True
 
 
 def draw_skeleton(

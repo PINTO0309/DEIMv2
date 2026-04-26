@@ -66,6 +66,7 @@ SIDE_PARENT_TO_CHILDREN = {
     29: (30, 31),  # wrist -> wrist_left / wrist_right
     32: (33, 34),  # hand -> hand_left / hand_right
 }
+SIDE_AWARE_SKELETON_CLASS_IDS = set(SIDE_PARENT_TO_CHILDREN.keys())
 
 LEFT_SIDE_COLOR = (0, 128, 0)
 RIGHT_SIDE_COLOR = (255, 0, 255)
@@ -910,6 +911,18 @@ def draw_dashed_rectangle(
     draw_dashed_line(image, bottom_right, bl_br, color, thickness, dash_length)
     draw_dashed_line(image, bl_br, top_left, color, thickness, dash_length)
 
+def is_handedness_compatible(parent_box: Box, child_box: Box) -> bool:
+    parent_side_aware = parent_box.classid in SIDE_AWARE_SKELETON_CLASS_IDS
+    child_side_aware = child_box.classid in SIDE_AWARE_SKELETON_CLASS_IDS
+
+    if parent_side_aware and parent_box.handedness < 0:
+        return False
+    if child_side_aware and child_box.handedness < 0:
+        return False
+    if parent_side_aware and child_side_aware:
+        return parent_box.handedness == child_box.handedness
+    return True
+
 def distance_euclid(p1: Tuple[int,int], p2: Tuple[int,int]) -> float:
     """2点 (x1, y1), (x2, y2) のユークリッド距離を返す"""
     return math.hypot(p1[0]-p2[0], p1[1]-p2[1])
@@ -987,6 +1000,8 @@ def draw_skeleton(
             for j, cbox in enumerate(child_list):
                 # ここで "同じ person_id 同士であること" をチェック
                 if (pbox.person_id is not None) and (cbox.person_id is not None) and (pbox.person_id == cbox.person_id):
+                    if not is_handedness_compatible(pbox, cbox):
+                        continue
 
                     dist = distance_euclid((pbox.cx, pbox.cy), (cbox.cx, cbox.cy))
                     if dist <= max_dist_threshold:

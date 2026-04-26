@@ -73,6 +73,7 @@ SIDE_PARENT_TO_CHILDREN = {
     29: (30, 31),
     32: (33, 34),
 }
+SIDE_AWARE_SKELETON_CLASS_IDS = set(SIDE_PARENT_TO_CHILDREN.keys())
 
 LEFT_SIDE_COLOR = (0, 128, 0)
 RIGHT_SIDE_COLOR = (255, 0, 255)
@@ -1352,6 +1353,19 @@ def draw_dashed_rectangle(
     draw_dashed_line(image, bottom_left, top_left, color, thickness, dash_length)
 
 
+def is_handedness_compatible(parent_box: Box, child_box: Box) -> bool:
+    parent_side_aware = parent_box.classid in SIDE_AWARE_SKELETON_CLASS_IDS
+    child_side_aware = child_box.classid in SIDE_AWARE_SKELETON_CLASS_IDS
+
+    if parent_side_aware and parent_box.handedness < 0:
+        return False
+    if child_side_aware and child_box.handedness < 0:
+        return False
+    if parent_side_aware and child_side_aware:
+        return parent_box.handedness == child_box.handedness
+    return True
+
+
 def draw_skeleton(
     image: np.ndarray,
     boxes: List[Box],
@@ -1390,6 +1404,8 @@ def draw_skeleton(
         for parent_idx, parent_box in enumerate(parent_list):
             for child_idx, child_box in enumerate(child_list):
                 if parent_box.person_id == child_box.person_id and parent_box.person_id is not None:
+                    if not is_handedness_compatible(parent_box, child_box):
+                        continue
                     dist = math.hypot(parent_box.cx - child_box.cx, parent_box.cy - child_box.cy)
                     if dist <= max_dist_threshold:
                         pair_candidates.append((dist, parent_idx, child_idx))
