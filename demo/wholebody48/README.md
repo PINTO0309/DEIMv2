@@ -1,0 +1,187 @@
+# Demo
+
+## Usage
+```
+usage: demo_deimv2_onnx_wholebody40_with_edges.py
+[-h] [-m MODEL] (-v VIDEO | -i IMAGES_DIR) [-ep {cpu,cuda,tensorrt}]
+[-it {fp16,int8}] [-dvw] [-dwk] [-ost OBJECT_SOCRE_THRESHOLD]
+[-ast ATTRIBUTE_SOCRE_THRESHOLD] [-kst KEYPOINT_THRESHOLD]
+[-kdm {dot,box,both}] [-ebm] [-dnm] [-dgm] [-dlr] [-dhm]
+[-drc [DISABLE_RENDER_CLASSIDS ...]] [-efm] [-dtk] [-dti] [-dhd]
+[-oyt] [-bblw BOUNDING_BOX_LINE_WIDTH] [-chf CAMERA_HORIZONTAL_FOV]
+
+options:
+  -h, --help
+    show this help message and exit
+  -m MODEL, --model MODEL
+    ONNX/TFLite file path for DEIMv2.
+  -v VIDEO, --video VIDEO
+    Video file path or camera index.
+  -i IMAGES_DIR, --images_dir IMAGES_DIR
+    jpg, png images folder path.
+  -ep {cpu,cuda,tensorrt}, --execution_provider {cpu,cuda,tensorrt}
+    Execution provider for ONNXRuntime.
+  -it {fp16,int8}, --inference_type {fp16,int8}
+    Inference type. Default: fp16
+  -dvw, --disable_video_writer
+    Disable video writer. Eliminates the file I/O load associated with automatic
+    recording to MP4. Devices that use a MicroSD card or similar for main storage
+    can speed up overall processing.
+  -dwk, --disable_waitKey
+    Disable cv2.waitKey(). When you want to process a batch of still images,
+    disable key-input wait and process them continuously.
+  -ost OBJECT_SOCRE_THRESHOLD, --object_socre_threshold OBJECT_SOCRE_THRESHOLD
+    The detection score threshold for object detection. Default: 0.35
+  -ast ATTRIBUTE_SOCRE_THRESHOLD, --attribute_socre_threshold ATTRIBUTE_SOCRE_THRESHOLD
+    The attribute score threshold for object detection. Default: 0.70
+  -kst KEYPOINT_THRESHOLD, --keypoint_threshold KEYPOINT_THRESHOLD
+    The keypoint score threshold for object detection. Default: 0.25
+  -kdm {dot,box,both}, --keypoint_drawing_mode {dot,box,both}
+    Key Point Drawing Mode. Default: dot
+  -ebm, --enable_bone_drawing_mode
+    Enable bone drawing mode. (Press B on the keyboard to switch modes)
+  -dnm, --disable_generation_identification_mode
+    Disable generation identification mode. (Press N on the keyboard to switch modes)
+  -dgm, --disable_gender_identification_mode
+    Disable gender identification mode. (Press G on the keyboard to switch modes)
+  -dlr, --disable_left_and_right_hand_identification_mode
+    Disable left and right hand identification mode. (Press H on the keyboard to switch modes)
+  -dhm, --disable_headpose_identification_mode
+    Disable HeadPose identification mode. (Press P on the keyboard to switch modes)
+  -drc [DISABLE_RENDER_CLASSIDS ...], --disable_render_classids [DISABLE_RENDER_CLASSIDS ...]
+    Class ID to disable bounding box drawing. List[int]. e.g. -drc 17 18 19
+  -efm, --enable_face_mosaic
+    Enable face mosaic.
+  -dtk, --disable_tracking
+    Disable instance tracking. (Press R on the keyboard to switch modes)
+  -dti, --disable_trackid_overlay
+    Disable TrackID overlay. (Press T on the keyboard to switch modes)
+  -dhd, --disable_head_distance_measurement
+    Disable Head distance measurement. (Press M on the keyboard to switch modes)
+  -oyt, --output_yolo_format_text
+    Output YOLO format texts and images.
+  -bblw BOUNDING_BOX_LINE_WIDTH, --bounding_box_line_width BOUNDING_BOX_LINE_WIDTH
+    Bounding box line width. Default: 2
+  -chf CAMERA_HORIZONTAL_FOV, --camera_horizontal_fov CAMERA_HORIZONTAL_FOV
+    Camera horizontal FOV. Default: 90
+```
+### Image files
+```bash
+uv run python demo/wholebody40/demo_deimv2_onnx_wholebody40_with_edges.py \
+-m deimv2_dinov3_x_wholebody40_800query_n_batch.onnx \
+-i images_partial \
+-ep cuda \
+-dwk \
+-dgm \
+-dnm \
+-dhm \
+-dtk \
+-dti \
+-dhd
+```
+
+|Image|Image|
+|:-:|:-:|
+|![000000009420](https://github.com/user-attachments/assets/a12b8f9d-0277-4a3c-8f06-faa58cfc06f8)|![000000014428](https://github.com/user-attachments/assets/f62fe90f-4933-4702-a0c3-438ded0790cd)|
+
+### USBCam or Video files
+```bash
+uv run python demo/wholebody40/demo_deimv2_onnx_wholebody40_with_edges.py \
+-m deimv2_dinov3_x_wholebody40_800query_n_batch.onnx \
+-v 0 \
+-ep tensorrt \
+-dwk \
+-dgm \
+-dnm \
+-dhm
+```
+
+## PyTorch Checkpoint Demo
+You can use either `best_stg2.pth` or `last_full_epoch.pth`. If the checkpoint contains `ema.module`, it will be used first; otherwise `model` will be used.
+
+### Image folder
+```bash
+uv run python demo/wholebody40/demo_deimv2_torch_wholebody40_ins.py \
+-c configs/deimv2/deimv2_dinov3_x_wholebody40_ins_s08_maskhead256x3_center.yml \
+-r ckpts/deimv2_dinov3_x_wholebody40_ins_center.pth \
+-i images_partial \
+-o outputs/images_partial \
+-d cuda \
+--score_threshold 0.35 \
+--mask_threshold 0.5 \
+--disable_generation_identification_mode \
+--disable_gender_identification_mode \
+--disable_headpose_identification_mode \
+--disable_head_distance_measurement \
+--disable_tracking \
+--enable-masks
+```
+
+- Runs inference on all `jpg/jpeg/png/bmp/webp` images in the input folder.
+- Saves rendered outputs to `-o/--output_dir` while preserving the original filenames.
+- By default, it draws bounding boxes for all 40 classes and overlays a semi-transparent mask only for body predictions (`classid=0`).
+- Body mask resize uses `center` origin by default. You can compare against the legacy behavior with `--mask_resize_origin topleft`.
+- `--mask_bilateral_d`, `--mask_bilateral_sigma_color`, and `--mask_bilateral_sigma_space` optionally smooth body mask probabilities before thresholding, which can reduce small holes in the rendered body mask.
+- If you specify `--disable_render_classids 0`, both the body bounding box and the body mask are hidden.
+- If you add `--save_raw_predictions`, the script saves `labels/scores/boxes` and body `mask_area/mask_bbox` to `predictions/*.json`, using the same body-mask postprocessing as the rendered output.
+
+### Mask head comparison configs
+For `wholebody40` instance segmentation, the following standalone configs are available for comparing `DEIMTransformer.mask_embed_head_hidden_dim` and `mask_embed_head_num_layers`.
+
+- `configs/deimv2/deimv2_dinov3_x_wholebody40_ins_s08_maskhead128x2.yml`
+- `configs/deimv2/deimv2_dinov3_x_wholebody40_ins_s08_maskhead192x2.yml`
+- `configs/deimv2/deimv2_dinov3_x_wholebody40_ins_s08_maskhead256x2.yml`
+- `configs/deimv2/deimv2_dinov3_x_wholebody40_ins_s08_maskhead256x3.yml`
+
+Example:
+
+```bash
+CUDA_VISIBLE_DEVICES=0 torchrun --master_port=7777 --nproc_per_node=1 train.py \
+-c configs/deimv2/deimv2_dinov3_x_wholebody40_ins_s08_maskhead192x2.yml \
+--use-amp --seed=0
+```
+
+Approximate mask-path cost comparison for `MLP(256, h, 256, L)` with `num_queries=800`, `mask_feature_level=0`, and `k_max=20`:
+
+|Config|`mask_embed_head` MACs|`mask einsum` MACs|Mask path total MACs|Relative total vs `128x2`|
+|:-:|--:|--:|--:|--:|
+|`128x2`|52,428,800|32,768,000|85,196,800|1.00x|
+|`192x2`|78,643,200|32,768,000|111,411,200|1.31x|
+|`256x2`|104,857,600|32,768,000|137,625,600|1.62x|
+|`256x3`|157,286,400|32,768,000|190,054,400|2.23x|
+
+- `k_max=20` reduces the fixed mask `einsum` path, but `mask_embed_head` is still evaluated for all queries.
+- If body mask quality is the priority, compare `128x2`, `192x2`, `256x2`, and `256x3` with the same training schedule before re-exporting ONNX.
+
+### ONNX model
+You can also pass an exported ONNX model to `-r/--resume`. In that case the same demo script switches to ONNX Runtime automatically.
+
+```bash
+uv run python demo/wholebody40/demo_deimv2_torch_wholebody40_ins.py \
+-c configs/deimv2/deimv2_dinov3_x_wholebody40_ins_s08.yml \
+-r deimv2_dinov3_x_wholebody40_ins_s08_800query_masks.onnx \
+-i images_partial \
+-o outputs/demo_wholebody40_onnx_ins_s08 \
+--enable-masks
+```
+
+### ONNX with TensorRT
+If `onnxruntime` was built with `TensorrtExecutionProvider`, you can enable TensorRT only for the ONNX path with `-d tensorrt`.
+
+```bash
+uv run python demo/wholebody40/demo_deimv2_torch_wholebody40_ins.py \
+-c configs/deimv2/deimv2_dinov3_x_wholebody40_ins_s08.yml \
+-r deimv2_dinov3_x_wholebody40_ins_s08_800query_masks.onnx \
+-i images_partial \
+-o outputs/demo_wholebody40_trt_ins_s08 \
+-d tensorrt \
+--enable-masks
+```
+
+- `-d tensorrt` is supported only when `-r/--resume` points to an `.onnx` file.
+- Supported values for `--inference_type` are `fp16` and `int8`.
+- The TensorRT engine cache is created next to the ONNX file on first run, so the first invocation can take longer.
+
+|Image|Image|
+|:-:|:-:|
+|![000000016905](https://github.com/user-attachments/assets/e43f7f95-e8e4-4a2e-9630-502f16fcac85)|![000000049135](https://github.com/user-attachments/assets/54c0daaa-64ec-4fe8-9d37-9fea60ad8ea3)|
