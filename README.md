@@ -353,6 +353,48 @@ CUDA_VISIBLE_DEVICES=0 torchrun --master_port=7777 --nproc_per_node=1 train.py -
 
 `last_full_epoch.pth` and `checkpoint%04d.pth` are the canonical resume checkpoints for exact epoch-boundary restoration. `best_stg1.pth` and `best_stg2.pth` remain valid for evaluation / tuning, but they are not the guaranteed exact-resume artifacts.
 
+If training occasionally aborts with CUDA OOM, keep the normal console logs with `tee` and resume up to 10 times only when the log contains an OOM message:
+```shell
+export CUDA_VISIBLE_DEVICES=0
+
+INITIAL_CMD=(torchrun --master_port=7777 --nproc_per_node=1 train.py \
+  -c configs/deimv2/deimv2_dinov3_x_wholebody48_ins_s08_maskhead256x3_center.yml \
+  --use-amp --seed=0)
+
+RESUME_CMD=(torchrun --master_port=7777 --nproc_per_node=1 train.py \
+  -c configs/deimv2/deimv2_dinov3_x_wholebody48_ins_s08_maskhead256x3_center.yml \
+  -r outputs/deimv2_dinov3_x_wholebody48_ins_s08_maskhead256x3_center/last_full_epoch.pth \
+  --use-amp --seed=0)
+
+run_and_log() {
+  local log_file="$1"
+  shift
+  "$@" 2>&1 | tee "$log_file"
+  return "${PIPESTATUS[0]}"
+}
+
+is_oom_log() {
+  grep -Eqi 'out of memory|OutOfMemoryError|CUDNN_STATUS_ALLOC_FAILED' "$1"
+}
+
+run_and_log train_initial.log "${INITIAL_CMD[@]}"
+status=$?
+
+if [ "$status" -ne 0 ] && is_oom_log train_initial.log; then
+  for attempt in $(seq 1 10); do
+    log_file="train_resume_oom_retry_${attempt}.log"
+    echo "OOM detected. Resume attempt ${attempt}/10..."
+    run_and_log "$log_file" "${RESUME_CMD[@]}"
+    status=$?
+
+    [ "$status" -eq 0 ] && break
+    is_oom_log "$log_file" || break
+  done
+fi
+
+exit "$status"
+```
+
 <!-- <summary>2. Testing </summary> -->
 2. Testing (Validation)
 ```shell
