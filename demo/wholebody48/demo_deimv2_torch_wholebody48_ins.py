@@ -1414,6 +1414,12 @@ def draw_dashed_rectangle(
     draw_dashed_line(image, bottom_left, top_left, color, thickness, dash_length)
 
 
+def is_handedness_compatible(parent_box: Box, child_box: Box) -> bool:
+    if parent_box.handedness < 0 or child_box.handedness < 0:
+        return True
+    return parent_box.handedness == child_box.handedness
+
+
 def draw_skeleton(
     image: np.ndarray,
     boxes: List[Box],
@@ -1454,6 +1460,8 @@ def draw_skeleton(
             for child_idx, child_box in enumerate(child_list):
                 dist = math.hypot(parent_box.cx - child_box.cx, parent_box.cy - child_box.cy)
                 if dist > max_dist_threshold:
+                    continue
+                if not is_handedness_compatible(parent_box, child_box):
                     continue
 
                 parent_mask_instance = (
