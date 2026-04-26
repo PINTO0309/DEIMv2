@@ -1627,8 +1627,8 @@ def draw_detections(
                     cv2.rectangle(debug_image, (box.x1, box.y1), (box.x2, box.y2), color, colored_line_width)
             elif classid in KEYPOINT_DRAW_CLASS_IDS:
                 if keypoint_drawing_mode in ['dot', 'both']:
-                    cv2.circle(debug_image, (box.cx, box.cy), 4, (255, 255, 255), -1)
-                    cv2.circle(debug_image, (box.cx, box.cy), 3, color, -1)
+                    cv2.circle(debug_image, (box.cx, box.cy), 3, (255, 255, 255), -1)
+                    cv2.circle(debug_image, (box.cx, box.cy), 2, color, -1)
                 if keypoint_drawing_mode in ['box', 'both']:
                     cv2.rectangle(debug_image, (box.x1, box.y1), (box.x2, box.y2), (255, 255, 255), 2)
                     cv2.rectangle(debug_image, (box.x1, box.y1), (box.x2, box.y2), color, 1)
