@@ -1220,6 +1220,60 @@ def clip_binary_mask_to_box(
     return clipped_mask
 
 
+def build_keypoint_mask_instance_map(
+    boxes: List[Box],
+    result: Dict[str, torch.Tensor],
+    args,
+    mask_threshold: float,
+) -> Dict[int, int]:
+    masks = result.get('masks')
+    if masks is None:
+        return {}
+
+    if torch.is_tensor(masks):
+        masks = masks.detach().cpu()
+
+    body_masks: List[Tuple[Box, np.ndarray, np.ndarray]] = []
+    for body_box in boxes:
+        if body_box.classid != BODY_CLASS_ID or body_box.source_idx < 0:
+            continue
+        mask_probs = lookup_mask_probs(masks, body_box.source_idx)
+        if mask_probs is None:
+            continue
+        mask_probs = postprocess_body_mask_probs(
+            mask_probs,
+            bilateral_d=args.mask_bilateral_d,
+            bilateral_sigma_color=args.mask_bilateral_sigma_color,
+            bilateral_sigma_space=args.mask_bilateral_sigma_space,
+        )
+        binary_mask = clip_binary_mask_to_box(mask_probs >= mask_threshold, body_box)
+        if binary_mask.any():
+            body_masks.append((body_box, mask_probs, binary_mask))
+
+    keypoint_mask_instance_map: Dict[int, int] = {}
+    for keypoint_box in boxes:
+        if keypoint_box.classid not in SKELETON_KEYPOINT_IDS:
+            continue
+
+        best_match: Tuple[float, float, int, int] | None = None
+        for body_box, mask_probs, binary_mask in body_masks:
+            y, x = keypoint_box.cy, keypoint_box.cx
+            if y < 0 or x < 0 or y >= binary_mask.shape[0] or x >= binary_mask.shape[1]:
+                continue
+            if not bool(binary_mask[y, x]):
+                continue
+
+            source_idx = int(body_box.source_idx)
+            candidate = (float(mask_probs[y, x]), float(body_box.score), -source_idx, source_idx)
+            if best_match is None or candidate > best_match:
+                best_match = candidate
+
+        if best_match is not None:
+            keypoint_mask_instance_map[id(keypoint_box)] = best_match[3]
+
+    return keypoint_mask_instance_map
+
+
 def overlay_body_masks(
     image: np.ndarray,
     result: Dict[str, torch.Tensor],
@@ -1365,6 +1419,7 @@ def draw_skeleton(
     boxes: List[Box],
     color: Tuple[int, int, int] = (0, 255, 255),
     max_dist_threshold: float = 500.0,
+    keypoint_mask_instance_map: Optional[Dict[int, int]] = None,
 ) -> None:
     person_boxes = [box for box in boxes if box.classid == 0]
     for person_id, person_box in enumerate(person_boxes):
@@ -1393,18 +1448,36 @@ def draw_skeleton(
 
         parent_capacity = [repeat_count] * len(parent_list)
         child_used = [False] * len(child_list)
-        pair_candidates: List[Tuple[float, int, int]] = []
+        pair_candidates: List[Tuple[int, float, int, int]] = []
 
         for parent_idx, parent_box in enumerate(parent_list):
             for child_idx, child_box in enumerate(child_list):
-                if parent_box.person_id == child_box.person_id and parent_box.person_id is not None:
-                    dist = math.hypot(parent_box.cx - child_box.cx, parent_box.cy - child_box.cy)
-                    if dist <= max_dist_threshold:
-                        pair_candidates.append((dist, parent_idx, child_idx))
+                dist = math.hypot(parent_box.cx - child_box.cx, parent_box.cy - child_box.cy)
+                if dist > max_dist_threshold:
+                    continue
 
-        pair_candidates.sort(key=lambda item: item[0])
+                parent_mask_instance = (
+                    keypoint_mask_instance_map.get(id(parent_box))
+                    if keypoint_mask_instance_map is not None
+                    else None
+                )
+                child_mask_instance = (
+                    keypoint_mask_instance_map.get(id(child_box))
+                    if keypoint_mask_instance_map is not None
+                    else None
+                )
+                if (
+                    parent_mask_instance is not None
+                    and child_mask_instance is not None
+                    and parent_mask_instance == child_mask_instance
+                ):
+                    pair_candidates.append((0, dist, parent_idx, child_idx))
+                elif parent_box.person_id == child_box.person_id and parent_box.person_id is not None:
+                    pair_candidates.append((1, dist, parent_idx, child_idx))
 
-        for _, parent_idx, child_idx in pair_candidates:
+        pair_candidates.sort(key=lambda item: (item[0], item[1], item[2], item[3]))
+
+        for _, _, parent_idx, child_idx in pair_candidates:
             if parent_capacity[parent_idx] > 0 and not child_used[child_idx]:
                 parent_box = parent_list[parent_idx]
                 child_box = child_list[child_idx]
@@ -1604,6 +1677,7 @@ def draw_detections(
     camera_horizontal_fov: int,
     enable_trackid_overlay: bool = False,
     track_color_cache: Optional[Dict[int, np.ndarray]] = None,
+    keypoint_mask_instance_map: Optional[Dict[int, int]] = None,
 ) -> np.ndarray:
     debug_image = image.copy()
     debug_image_h, debug_image_w = debug_image.shape[:2]
@@ -1753,7 +1827,13 @@ def draw_detections(
             cv2.putText(debug_image, f'{distance:.3f} m', distance_org, cv2.FONT_HERSHEY_SIMPLEX, 0.7, (10, 10, 10), 1, cv2.LINE_AA)
 
     if enable_bone_drawing_mode:
-        draw_skeleton(image=debug_image, boxes=boxes, color=(0, 255, 255), max_dist_threshold=300)
+        draw_skeleton(
+            image=debug_image,
+            boxes=boxes,
+            color=(0, 255, 255),
+            max_dist_threshold=300,
+            keypoint_mask_instance_map=keypoint_mask_instance_map,
+        )
 
     return debug_image
 
@@ -2127,6 +2207,19 @@ def render_frame(
     runtime_settings: Dict[str, object],
     track_color_cache: Optional[Dict[int, np.ndarray]] = None,
 ) -> np.ndarray:
+    keypoint_mask_instance_map = None
+    if (
+        args.enable_masks
+        and runtime_settings['enable_bone_drawing_mode']
+        and result.get('masks') is not None
+    ):
+        keypoint_mask_instance_map = build_keypoint_mask_instance_map(
+            boxes=boxes,
+            result=result,
+            args=args,
+            mask_threshold=args.mask_threshold,
+        )
+
     rendered = overlay_body_masks(
         image=image.copy(),
         result=result,
@@ -2162,6 +2255,7 @@ def render_frame(
         camera_horizontal_fov=args.camera_horizontal_fov,
         enable_trackid_overlay=runtime_settings['enable_trackid_overlay'],
         track_color_cache=track_color_cache,
+        keypoint_mask_instance_map=keypoint_mask_instance_map,
     )
 
 
