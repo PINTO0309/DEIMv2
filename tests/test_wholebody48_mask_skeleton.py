@@ -96,6 +96,73 @@ def test_draw_skeleton_without_mask_context_keeps_distance_order(monkeypatch):
     assert lines[0] == ((4, 5), (5, 5))
 
 
+def test_draw_skeleton_with_mask_context_rejects_different_mask_instances(monkeypatch):
+    image = np.zeros((10, 10, 3), dtype=np.uint8)
+    parent = _box(21, 4, 5)
+    child = _box(22, 5, 5)
+    child.handedness = 0
+    boxes = [
+        _body(0),
+        parent,
+        child,
+    ]
+    mask_context = {
+        id(parent): 0,
+        id(child): 1,
+    }
+    lines = []
+
+    def record_line(_image, pt1, pt2, color, thickness=1):
+        lines.append((pt1, pt2))
+
+    monkeypatch.setattr(demo.cv2, 'line', record_line)
+
+    demo.draw_skeleton(
+        image=image,
+        boxes=boxes,
+        max_dist_threshold=300,
+        keypoint_mask_instance_map=mask_context,
+    )
+
+    assert lines == []
+
+
+def test_draw_skeleton_with_mask_context_rejects_unassigned_mask_instances(monkeypatch):
+    image = np.zeros((10, 10, 3), dtype=np.uint8)
+    parent = _box(21, 4, 5)
+    child = _box(22, 5, 5)
+    child.handedness = 0
+    boxes = [
+        _body(0),
+        parent,
+        child,
+    ]
+    lines = []
+
+    def record_line(_image, pt1, pt2, color, thickness=1):
+        lines.append((pt1, pt2))
+
+    monkeypatch.setattr(demo.cv2, 'line', record_line)
+
+    demo.draw_skeleton(
+        image=image,
+        boxes=boxes,
+        max_dist_threshold=300,
+        keypoint_mask_instance_map={id(child): 0},
+    )
+
+    assert lines == []
+
+    demo.draw_skeleton(
+        image=image,
+        boxes=boxes,
+        max_dist_threshold=300,
+        keypoint_mask_instance_map={},
+    )
+
+    assert lines == []
+
+
 def test_draw_skeleton_rejects_known_handedness_mismatch_even_with_same_mask(monkeypatch):
     image = np.zeros((10, 10, 3), dtype=np.uint8)
     parent = _box(22, 4, 5)

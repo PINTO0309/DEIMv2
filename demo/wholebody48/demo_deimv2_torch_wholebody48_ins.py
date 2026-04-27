@@ -1472,24 +1472,18 @@ def draw_skeleton(
                 if not is_handedness_compatible(parent_box, child_box):
                     continue
 
-                parent_mask_instance = (
-                    keypoint_mask_instance_map.get(id(parent_box))
-                    if keypoint_mask_instance_map is not None
-                    else None
-                )
-                child_mask_instance = (
-                    keypoint_mask_instance_map.get(id(child_box))
-                    if keypoint_mask_instance_map is not None
-                    else None
-                )
-                if (
-                    parent_mask_instance is not None
-                    and child_mask_instance is not None
-                    and parent_mask_instance == child_mask_instance
-                ):
+                if keypoint_mask_instance_map is not None:
+                    parent_mask_instance = keypoint_mask_instance_map.get(id(parent_box))
+                    child_mask_instance = keypoint_mask_instance_map.get(id(child_box))
+                    if (
+                        parent_mask_instance is None
+                        or child_mask_instance is None
+                        or parent_mask_instance != child_mask_instance
+                    ):
+                        continue
                     pair_candidates.append((0, dist, parent_idx, child_idx))
                 elif parent_box.person_id == child_box.person_id and parent_box.person_id is not None:
-                    pair_candidates.append((1, dist, parent_idx, child_idx))
+                    pair_candidates.append((0, dist, parent_idx, child_idx))
 
         pair_candidates.sort(key=lambda item: (item[0], item[1], item[2], item[3]))
 
