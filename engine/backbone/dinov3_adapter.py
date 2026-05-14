@@ -24,7 +24,7 @@ from .vit_tiny import VisionTransformer
 from .dinov3 import DinoVisionTransformer
 
 
-def _load_pretrained_weights(weights_path):
+def _load_checkpoint(weights_path):
     try:
         return torch.load(weights_path, map_location='cpu')
     except pickle.UnpicklingError as error:
@@ -38,6 +38,36 @@ def _load_pretrained_weights(weights_path):
             return torch.load(weights_path, map_location='cpu', weights_only=False)
         except TypeError:
             return torch.load(weights_path, map_location='cpu')
+
+
+def _extract_pretrained_state(checkpoint, prefixes=()):
+    if isinstance(checkpoint, dict):
+        ema = checkpoint.get('ema')
+        if isinstance(ema, dict) and isinstance(ema.get('module'), dict):
+            checkpoint = ema['module']
+        elif isinstance(checkpoint.get('model'), dict):
+            checkpoint = checkpoint['model']
+        elif isinstance(checkpoint.get('state_dict'), dict):
+            checkpoint = checkpoint['state_dict']
+
+    if not isinstance(checkpoint, dict):
+        return checkpoint
+
+    for prefix in prefixes:
+        state = {
+            k[len(prefix):]: v
+            for k, v in checkpoint.items()
+            if k.startswith(prefix)
+        }
+        if state:
+            return state
+
+    return checkpoint
+
+
+def _load_pretrained_weights(weights_path, prefixes=()):
+    checkpoint = _load_checkpoint(weights_path)
+    return _extract_pretrained_state(checkpoint, prefixes)
 
 
 class SpatialPriorModulev2(nn.Module):
@@ -106,14 +136,18 @@ class DINOv3STAs(nn.Module):
             self.dinov3 = DinoVisionTransformer(name=name)
             if weights_path is not None and os.path.exists(weights_path):
                 print(f'Loading ckpt from {weights_path}...')
-                self.dinov3.load_state_dict(_load_pretrained_weights(weights_path))
+                self.dinov3.load_state_dict(
+                    _load_pretrained_weights(weights_path, prefixes=('backbone.dinov3.',))
+                )
             else:
                 print('Training DINOv3 from scratch...')
         else:
             self.dinov3 =  VisionTransformer(embed_dim=embed_dim, num_heads=num_heads, return_layers=interaction_indexes)
             if weights_path is not None and os.path.exists(weights_path):
                 print(f'Loading ckpt from {weights_path}...')
-                self.dinov3._model.load_state_dict(_load_pretrained_weights(weights_path))
+                self.dinov3._model.load_state_dict(
+                    _load_pretrained_weights(weights_path, prefixes=('backbone.dinov3._model.',))
+                )
             else:
                 print('Training ViT-Tiny from scratch...')
 
