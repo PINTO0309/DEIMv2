@@ -101,9 +101,9 @@ You can use either `best_stg2.pth` or `last_full_epoch.pth`. If the checkpoint c
 
 ### Image folder
 ```bash
-uv run python demo/wholebody40/demo_deimv2_torch_wholebody40_ins.py \
--c configs/deimv2/deimv2_dinov3_x_wholebody40_ins_s08_maskhead256x3_center.yml \
--r ckpts/deimv2_dinov3_x_wholebody40_ins_center.pth \
+uv run python demo/wholebody48/demo_deimv2_torch_wholebody48_ins.py \
+-c configs/deimv2/deimv2_dinov3_x_wholebody48_ins_s08_maskhead256x3_center.yml \
+-r ckpts/deimv2_dinov3_x_wholebody48_ins_center.pth \
 -i images_partial \
 -o outputs/images_partial \
 -d cuda \
@@ -111,6 +111,7 @@ uv run python demo/wholebody40/demo_deimv2_torch_wholebody40_ins.py \
 --mask_threshold 0.5 \
 --disable_generation_identification_mode \
 --disable_gender_identification_mode \
+--disable_left_and_right_label \
 --disable_headpose_identification_mode \
 --disable_head_distance_measurement \
 --disable_tracking \
@@ -119,10 +120,11 @@ uv run python demo/wholebody40/demo_deimv2_torch_wholebody40_ins.py \
 
 - Runs inference on all `jpg/jpeg/png/bmp/webp` images in the input folder.
 - Saves rendered outputs to `-o/--output_dir` while preserving the original filenames.
-- By default, it draws bounding boxes for all 40 classes and overlays a semi-transparent mask only for body predictions (`classid=0`).
+- By default, it draws bounding boxes for all 48 classes and overlays a semi-transparent mask only for body predictions (`classid=0`).
 - Body mask resize uses `center` origin by default. You can compare against the legacy behavior with `--mask_resize_origin topleft`.
 - `--mask_bilateral_d`, `--mask_bilateral_sigma_color`, and `--mask_bilateral_sigma_space` optionally smooth body mask probabilities before thresholding, which can reduce small holes in the rendered body mask.
 - If you specify `--disable_render_classids 0`, both the body bounding box and the body mask are hidden.
+- If you specify `--disable_left_and_right_label`, only the rendered `L`/`R` left-right labels are hidden; left/right identification, colors, and bounding boxes remain enabled.
 - If you add `--save_raw_predictions`, the script saves `labels/scores/boxes` and body `mask_area/mask_bbox` to `predictions/*.json`, using the same body-mask postprocessing as the rendered output.
 
 ### Mask head comparison configs

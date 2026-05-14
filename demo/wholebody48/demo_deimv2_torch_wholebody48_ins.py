@@ -1680,6 +1680,7 @@ def draw_detections(
     disable_generation_identification_mode: bool,
     disable_gender_identification_mode: bool,
     disable_left_and_right_hand_identification_mode: bool,
+    disable_left_and_right_label: bool,
     disable_headpose_identification_mode: bool,
     bounding_box_line_width: int,
     keypoint_dot_radius: int,
@@ -1812,16 +1813,17 @@ def draw_detections(
         )
         draw_text_with_outline(debug_image, attr_txt, text_org, color)
 
-        handedness_txt = ''
-        if classid in LEFT_SIDE_CLASS_IDS:
-            handedness_txt = 'L'
-        elif classid in RIGHT_SIDE_CLASS_IDS:
-            handedness_txt = 'R'
-        elif box.handedness == 0:
-            handedness_txt = 'L'
-        elif box.handedness == 1:
-            handedness_txt = 'R'
-        draw_text_with_outline(debug_image, handedness_txt, text_org, color)
+        if not disable_left_and_right_label:
+            handedness_txt = ''
+            if classid in LEFT_SIDE_CLASS_IDS:
+                handedness_txt = 'L'
+            elif classid in RIGHT_SIDE_CLASS_IDS:
+                handedness_txt = 'R'
+            elif box.handedness == 0:
+                handedness_txt = 'L'
+            elif box.handedness == 1:
+                handedness_txt = 'R'
+            draw_text_with_outline(debug_image, handedness_txt, text_org, color)
 
         if enable_head_distance_measurement and classid == 7 and abs(box.x2 - box.x1) > 0:
             if camera_horizontal_fov > 90:
@@ -2118,6 +2120,7 @@ def prepare_runtime_settings(args) -> Dict[str, object]:
         'disable_generation_identification_mode': args.disable_generation_identification_mode,
         'disable_gender_identification_mode': args.disable_gender_identification_mode,
         'disable_left_and_right_hand_identification_mode': args.disable_left_and_right_hand_identification_mode,
+        'disable_left_and_right_label': args.disable_left_and_right_label,
         'disable_headpose_identification_mode': args.disable_headpose_identification_mode,
         'enable_face_mosaic': args.enable_face_mosaic,
     }
@@ -2258,6 +2261,7 @@ def render_frame(
         disable_generation_identification_mode=runtime_settings['disable_generation_identification_mode'],
         disable_gender_identification_mode=runtime_settings['disable_gender_identification_mode'],
         disable_left_and_right_hand_identification_mode=runtime_settings['disable_left_and_right_hand_identification_mode'],
+        disable_left_and_right_label=runtime_settings['disable_left_and_right_label'],
         disable_headpose_identification_mode=runtime_settings['disable_headpose_identification_mode'],
         bounding_box_line_width=args.bounding_box_line_width,
         keypoint_dot_radius=args.keypoint_dot_radius,
@@ -2576,6 +2580,7 @@ def parse_args():
     parser.add_argument('--disable_generation_identification_mode', action='store_true')
     parser.add_argument('--disable_gender_identification_mode', action='store_true')
     parser.add_argument('--disable_left_and_right_hand_identification_mode', action='store_true')
+    parser.add_argument('--disable_left_and_right_label', action='store_true')
     parser.add_argument('--disable_headpose_identification_mode', action='store_true')
     parser.add_argument('--disable_render_classids', type=int, nargs='*', default=[])
     parser.add_argument('--enable_face_mosaic', action='store_true')
