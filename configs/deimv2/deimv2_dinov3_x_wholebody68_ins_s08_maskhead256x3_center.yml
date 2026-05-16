@@ -73,6 +73,25 @@ epoches: 58
 #   betas: [0.9, 0.999]
 #   weight_decay: 0.00003125
 
+# ### 2 GPU x 1 batch
+# optimizer:
+#   type: AdamW
+#   params:
+#     -
+#       params: '^(?=.*.dinov3)(?!.*(?:norm|bn|bias)).*$'
+#       lr: 0.00001
+#     -
+#       params: '^(?=.*.dinov3)(?=.*(?:norm|bn|bias)).*$'
+#       lr: 0.00001
+#       weight_decay: 0.
+#     -
+#       params: '^(?=.*(?:sta|encoder|decoder))(?=.*(?:norm|bn|bias)).*$'
+#       weight_decay: 0.
+
+#   lr: 0.000125
+#   betas: [0.9, 0.999]
+#   weight_decay: 0.00003125
+
 ### 4 GPU x 1 batch
 optimizer:
   type: AdamW
