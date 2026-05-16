@@ -130,7 +130,7 @@ train_dataloader:
         ops: ['RandomPhotometricDistort', 'RandomZoomOut', 'RandomIoUCrop']
       mosaic_prob: -0.1
   total_batch_size: 3 # Total batch size for all GPUs
-  num_workers: 4 # Number of workers per rank/GPU process
+  num_workers: 6 # Number of workers per rank/GPU process
 
   collate_fn:
     mixup_prob: 0.0
