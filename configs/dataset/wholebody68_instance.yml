@@ -16,7 +16,7 @@ train_dataloader:
   dataset:
     type: CocoDetection
     img_folder: ./tools/dataset/wholebody68/images/
-    ann_file: ./tools/dataset/wholebody68/annotations/train_ins.json
+    ann_file: ./tools/dataset/wholebody68/annotations/train_ins.parquet
     return_masks: True
     transforms:
       type: Compose
@@ -33,8 +33,8 @@ val_dataloader:
   dataset:
     type: CocoDetection
     img_folder: ./tools/dataset/wholebody68/images/
-    ann_file: ./tools/dataset/wholebody68/annotations/val.json
-    segm_ann_file: ./tools/dataset/wholebody68/annotations/val_ins.json
+    ann_file: ./tools/dataset/wholebody68/annotations/val.parquet
+    segm_ann_file: ./tools/dataset/wholebody68/annotations/val_ins.parquet
     return_masks: True
     transforms:
       type: Compose

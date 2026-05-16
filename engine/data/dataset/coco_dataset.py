@@ -14,6 +14,7 @@ from PIL import Image
 import faster_coco_eval
 from ._dataset import DetDataset
 from .coco_utils import convert_coco_poly_to_mask
+from .coco_parquet import CocoParquetStore, is_parquet_path
 from .._misc import convert_to_tv_tensor
 from ...core import register
 
@@ -32,7 +33,16 @@ class CocoDetection(torchvision.datasets.CocoDetection, DetDataset):
     def __init__(self, img_folder, ann_file, transforms, return_masks=False,
                  remap_mscoco_category=False, mask_category_ids=None, segm_eval_category_ids=None,
                  segm_ann_file=None):
-        super(CocoDetection, self).__init__(img_folder, ann_file)
+        self.is_parquet = is_parquet_path(ann_file)
+        self.parquet_store = None
+        if self.is_parquet:
+            self.root = img_folder
+            self.parquet_store = CocoParquetStore(ann_file)
+            self.ids = self.parquet_store.ids
+            self.parquet_store.close()
+            self.coco = None
+        else:
+            super(CocoDetection, self).__init__(img_folder, ann_file)
         self._transforms = transforms
         self.prepare = ConvertCocoPolysToMask(
             return_masks,
@@ -54,9 +64,12 @@ class CocoDetection(torchvision.datasets.CocoDetection, DetDataset):
         return img, target
 
     def load_item(self, idx):
-        image, target = super(CocoDetection, self).__getitem__(idx)
-        image_id = self.ids[idx]
-        target = {'image_id': image_id, 'annotations': target}
+        if self.is_parquet:
+            image, target = self.parquet_store.read_item(idx)
+        else:
+            image, target = super(CocoDetection, self).__getitem__(idx)
+            image_id = self.ids[idx]
+            target = {'image_id': image_id, 'annotations': target}
 
         if self.remap_mscoco_category:
             image, target = self.prepare(image, target, category2label=mscoco_category2label)
@@ -73,6 +86,11 @@ class CocoDetection(torchvision.datasets.CocoDetection, DetDataset):
 
         return image, target
 
+    def get_coco_api(self):
+        if self.is_parquet:
+            return self.parquet_store.build_coco()
+        return self.coco
+
     def extra_repr(self) -> str:
         s = f' img_folder: {self.img_folder}\n ann_file: {self.ann_file}\n'
         s += f' return_masks: {self.return_masks}\n'
@@ -84,6 +102,8 @@ class CocoDetection(torchvision.datasets.CocoDetection, DetDataset):
 
     @property
     def categories(self, ):
+        if self.is_parquet:
+            return self.parquet_store.categories
         return self.coco.dataset['categories']
 
     @property

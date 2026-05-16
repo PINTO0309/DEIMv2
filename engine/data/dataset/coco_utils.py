@@ -13,6 +13,8 @@ import faster_coco_eval.core.mask as coco_mask
 from faster_coco_eval import COCO
 import copy
 
+from .coco_parquet import is_parquet_path, load_coco_api_from_parquet
+
 
 def decode_coco_segmentation(segmentation, height, width):
     empty_mask = torch.zeros((height, width), dtype=torch.uint8)
@@ -227,6 +229,8 @@ def get_coco_api_from_dataset(dataset):
         if isinstance(dataset, torch.utils.data.Subset):
             dataset = dataset.dataset
     if isinstance(dataset, torchvision.datasets.CocoDetection):
+        if hasattr(dataset, 'get_coco_api'):
+            return dataset.get_coco_api()
         return dataset.coco
     return convert_to_coco_api(dataset)
 
@@ -241,7 +245,10 @@ def get_coco_api_from_dataset_for_segm(dataset, category_ids=None, ignore_missin
     if not isinstance(dataset, torchvision.datasets.CocoDetection):
         return convert_to_coco_api(dataset)
 
-    coco_gt = copy.deepcopy(dataset.coco)
+    if hasattr(dataset, 'get_coco_api'):
+        coco_gt = copy.deepcopy(dataset.get_coco_api())
+    else:
+        coco_gt = copy.deepcopy(dataset.coco)
     annotations = coco_gt.dataset.get('annotations', [])
     images = coco_gt.dataset.get('images', [])
     categories = coco_gt.dataset.get('categories', [])
@@ -267,7 +274,10 @@ def get_coco_api_from_dataset_for_segm(dataset, category_ids=None, ignore_missin
 
 
 def get_coco_api_from_annotation_file(ann_file, category_ids=None, ignore_missing_masks=False):
-    coco_gt = COCO(ann_file)
+    if is_parquet_path(ann_file):
+        coco_gt = load_coco_api_from_parquet(ann_file)
+    else:
+        coco_gt = COCO(ann_file)
     coco_gt = copy.deepcopy(coco_gt)
 
     annotations = coco_gt.dataset.get('annotations', [])

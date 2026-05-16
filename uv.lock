@@ -1,5 +1,5 @@
 version = 1
-revision = 2
+revision = 3
 requires-python = "==3.11.12"
 resolution-markers = [
     "sys_platform == 'darwin'",
@@ -246,6 +246,7 @@ dependencies = [
     { name = "onnxruntime-gpu" },
     { name = "onnxsim" },
     { name = "onnxslim" },
+    { name = "pyarrow" },
     { name = "pybind11" },
     { name = "pyyaml" },
     { name = "scipy" },
@@ -255,6 +256,7 @@ dependencies = [
     { name = "tensorboard" },
     { name = "torch" },
     { name = "torchvision" },
+    { name = "tqdm" },
     { name = "transformers" },
 ]
 
@@ -273,6 +275,7 @@ requires-dist = [
     { name = "onnxruntime-gpu", specifier = "==1.23.0" },
     { name = "onnxsim", specifier = "==0.4.30" },
     { name = "onnxslim", specifier = "==0.1.69" },
+    { name = "pyarrow", specifier = "==12.0.0" },
     { name = "pybind11", specifier = "==3.0.1" },
     { name = "pyyaml", specifier = "==6.0.3" },
     { name = "scipy", specifier = "==1.16.2" },
@@ -282,6 +285,7 @@ requires-dist = [
     { name = "tensorboard", specifier = "==2.20.0" },
     { name = "torch", specifier = "==2.5.1" },
     { name = "torchvision", specifier = "==0.20.1" },
+    { name = "tqdm", specifier = "==4.67.1" },
     { name = "transformers", specifier = "==4.56.2" },
 ]
 
@@ -986,6 +990,22 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/c4/01/41f63d66a801a561c9e335523516bd5f761bc43cc61f8b75918306bf2da8/pyaml-25.7.0.tar.gz", hash = "sha256:e113a64ec16881bf2b092e2beb84b7dcf1bd98096ad17f5f14e8fb782a75d99b", size = 29814, upload-time = "2025-07-10T18:44:51.824Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/a8/ee/a878f2ad010cbccb311f947f0f2f09d38f613938ee28c34e60fceecc75a1/pyaml-25.7.0-py3-none-any.whl", hash = "sha256:ce5d7867cc2b455efdb9b0448324ff7b9f74d99f64650f12ca570102db6b985f", size = 26418, upload-time = "2025-07-10T18:44:50.679Z" },
+]
+
+[[package]]
+name = "pyarrow"
+version = "12.0.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "numpy" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/98/52/ccf4f4c6f70fcd67767faaf23db3cbc5f766af9c4aeaf3961adfbf22f126/pyarrow-12.0.0.tar.gz", hash = "sha256:19c812d303610ab5d664b7b1de4051ae23565f9f94d04cbea9e50569746ae1ee", size = 1014741, upload-time = "2023-05-02T09:45:28.982Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/fe/05/b66d098211abbbca2c453731e6f05bbc75632728778e7c2b0171d6ab43be/pyarrow-12.0.0-cp311-cp311-macosx_10_14_x86_64.whl", hash = "sha256:a7cd32fe77f967fe08228bc100433273020e58dd6caced12627bcc0a7675a513", size = 24684403, upload-time = "2023-05-02T09:43:34.435Z" },
+    { url = "https://files.pythonhosted.org/packages/75/52/c8593ecdfc2dcb61b729c8f547fa5316c8f4eff0dbec2d34c9ae45e9949e/pyarrow-12.0.0-cp311-cp311-macosx_11_0_arm64.whl", hash = "sha256:92fb031e6777847f5c9b01eaa5aa0c9033e853ee80117dce895f116d8b0c3ca3", size = 22596148, upload-time = "2023-05-02T09:43:43.815Z" },
+    { url = "https://files.pythonhosted.org/packages/08/c1/c0f88d03b7916bf069d660975ac625449c8d7ea13561ed8bf9db371260b5/pyarrow-12.0.0-cp311-cp311-manylinux_2_17_aarch64.manylinux2014_aarch64.whl", hash = "sha256:280289ebfd4ac3570f6b776515baa01e4dcbf17122c401e4b7170a27c4be63fd", size = 36371499, upload-time = "2023-05-02T09:43:49.084Z" },
+    { url = "https://files.pythonhosted.org/packages/5c/76/7eed3d792d675a081022e064bdeac6f669a5525e19cd4c6c16510af302dd/pyarrow-12.0.0-cp311-cp311-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:272f147d4f8387bec95f17bb58dcfc7bc7278bb93e01cb7b08a0e93a8921e18e", size = 38935040, upload-time = "2023-05-02T09:43:55.56Z" },
+    { url = "https://files.pythonhosted.org/packages/28/fc/6311af1f65ea420846a79d68410953527ef44fd751ec5bc1b460546a77ff/pyarrow-12.0.0-cp311-cp311-win_amd64.whl", hash = "sha256:0846ace49998825eda4722f8d7f83fa05601c832549c9087ea49d6d5397d8cec", size = 21447130, upload-time = "2023-05-02T09:44:02.544Z" },
 ]
 
 [[package]]
