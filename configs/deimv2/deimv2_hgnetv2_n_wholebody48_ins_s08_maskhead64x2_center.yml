@@ -1,0 +1,158 @@
+__include__: [
+  '../dataset/wholebody48_instance.yml',
+  '../runtime.yml',
+  '../base/dataloader.yml',
+  '../base/optimizer.yml',
+  '../base/deimv2.yml'
+]
+
+output_dir: ./outputs/deimv2_hgnetv2_n_wholebody48_ins_s08_maskhead64x2_center
+mask_target_class_ids: [0]
+center_eval_class_ids: [21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44]
+center_eval_thresholds: [0.25, 0.5, 1.0]
+center_eval_primary_threshold: 0.5
+center_eval_normalizer: half_diagonal
+center_eval_score_threshold: 0.0
+
+HGNetv2:
+  name: 'B0'
+  return_idx: [2, 3]
+  freeze_at: -1
+  freeze_norm: False
+  use_lab: True
+
+HybridEncoder:
+  in_channels: [512, 1024]
+  feat_strides: [16, 32]
+
+  hidden_dim: 128
+  use_encoder_idx: [1]
+  dim_feedforward: 512
+
+  expansion: 0.34
+  depth_mult: 0.5
+
+  version: 'dfine'
+
+DEIMTransformer:
+  feat_channels: [128, 128]
+  feat_strides: [16, 32]
+  hidden_dim: 128
+  num_levels: 2
+  num_points: [6, 6]
+
+  num_layers: 3
+  eval_idx: -1
+  num_queries: 960
+  dim_feedforward: 512
+  mask_feature_level: 0 # 0=stride16, 1=stride32
+  mask_compute_mode: lazy
+  mask_embed_head_hidden_dim: 64
+  mask_embed_head_num_layers: 2
+  use_contour_aux_head: True
+  use_distance_aux_head: True
+  aux_mask_feature_level: 0 # 0=stride16, 1=stride32
+
+PostProcessor:
+  num_top_queries: 960
+  k_max: 0
+
+optimizer:
+  type: AdamW
+  params:
+    -
+      params: '^(?=.*backbone)(?!.*norm|bn).*$'
+      lr: 0.0004
+    -
+      params: '^(?=.*backbone)(?=.*norm|bn).*$'
+      lr: 0.0004
+      weight_decay: 0.
+    -
+      params: '^(?=.*(?:encoder|decoder))(?=.*(?:norm|bn|bias)).*$'
+      weight_decay: 0.
+
+  lr: 0.0002
+  betas: [0.9, 0.999]
+  weight_decay: 0.000025
+
+epoches: 160
+
+flat_epoch: 7800
+no_aug_epoch: 12
+lr_gamma: 1.0
+
+train_dataloader:
+  dataset:
+    transforms:
+      ops:
+        - {type: RandomPhotometricDistort, p: 0.5}
+        - {type: RandomZoomOut, p: 0.5, fill: 0, side_range: [1.0, 1.5]}
+        - {type: RandomIoUCrop, p: 0.8}
+        - {type: SanitizeBoundingBoxes, min_size: 2}
+        - {type: RandomHorizontalFlipWithClass, class_pairs: [[9, 15], [10, 14], [11, 13], [23, 24], [27, 28], [30, 31], [33, 34], [37, 38], [40, 41], [43, 44], [46, 47]]}
+        - {type: Resize, size: [640, 640], }
+        - {type: SanitizeBoundingBoxes, min_size: 2}
+        - {type: ConvertPILImage, dtype: 'float32', scale: True}
+        - {type: ConvertBoxes, fmt: 'cxcywh', normalize: True}
+      policy:
+        epoch: [4, 78, 148]
+        ops: ['Mosaic', 'RandomPhotometricDistort', 'RandomZoomOut', 'RandomIoUCrop']
+      mosaic_prob: -0.1
+  total_batch_size: 6
+  num_workers: 6
+
+  collate_fn:
+    ema_restart_decay: 0.9999
+    base_size_repeat: ~
+    mixup_prob: 0.0
+    mixup_epochs: [4, 78]
+    stop_epoch: 148
+    copyblend_prob: 0.0
+    copyblend_epochs: [4, 78]
+    area_threshold: 100
+    num_objects: 3
+    with_expand: True
+    expand_ratios: [0.1, 0.25]
+
+val_dataloader:
+  dataset:
+    transforms:
+      ops:
+        - {type: Resize, size: [640, 640], }
+        - {type: ConvertPILImage, dtype: 'float32', scale: True}
+  total_batch_size: 16
+  num_workers: 16
+
+DEIMCriterion:
+  weight_dict:
+    loss_mal: 1
+    loss_bbox: 5
+    loss_giou: 2
+    loss_fgl: 0.15
+    loss_ddf: 1.5
+    loss_center: 3.0
+    loss_mask_bce: 5
+    loss_mask_dice: 5
+    loss_mask_boundary: 1.0
+    loss_mask_contour: 0.5
+    loss_mask_distance: 0.25
+  losses: ['mal', 'boxes', 'local', 'masks']
+  use_boundary_aware_loss: True
+  boundary_aware_width: 3
+  boundary_aware_weight: 2.0
+  use_contour_detection: True
+  use_distance_transform: True
+  distance_transform_steps: 5
+  center_target_class_ids: [21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44]
+  center_distance_min_radius: 0.02
+  center_bbox_wh_weight: 0.25
+  center_giou_weight: 0.25
+  center_local_weight: 0.0
+
+  matcher:
+    change_matcher: True
+    iou_order_alpha: 4.0
+    matcher_change_epoch: 136
+    center_target_class_ids: [21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44]
+    center_distance_min_radius: 0.02
+    center_match_wh_cost_weight: 0.25

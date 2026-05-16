@@ -156,6 +156,7 @@ tfjs*/
 *.mp4
 0*/
 tmp/
+*.tar.gz
 
 human-instance-segmentation/
 deimv2_dinov3_x_wholebody40*/
