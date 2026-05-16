@@ -55,23 +55,23 @@ PostProcessor:
 epoches: 58
 
 ### 1 GPU x 1 batch
-# optimizer:
-#   type: AdamW
-#   params:
-#     -
-#       params: '^(?=.*.dinov3)(?!.*(?:norm|bn|bias)).*$'
-#       lr: 0.00001
-#     -
-#       params: '^(?=.*.dinov3)(?=.*(?:norm|bn|bias)).*$'
-#       lr: 0.00001
-#       weight_decay: 0.
-#     -
-#       params: '^(?=.*(?:sta|encoder|decoder))(?=.*(?:norm|bn|bias)).*$'
-#       weight_decay: 0.
+optimizer:
+  type: AdamW
+  params:
+    -
+      params: '^(?=.*.dinov3)(?!.*(?:norm|bn|bias)).*$'
+      lr: 0.00001
+    -
+      params: '^(?=.*.dinov3)(?=.*(?:norm|bn|bias)).*$'
+      lr: 0.00001
+      weight_decay: 0.
+    -
+      params: '^(?=.*(?:sta|encoder|decoder))(?=.*(?:norm|bn|bias)).*$'
+      weight_decay: 0.
 
-#   lr: 0.0000625
-#   betas: [0.9, 0.999]
-#   weight_decay: 0.00003125
+  lr: 0.0000625
+  betas: [0.9, 0.999]
+  weight_decay: 0.00003125
 
 # ### 2 GPU x 1 batch
 # optimizer:
@@ -93,23 +93,23 @@ epoches: 58
 #   weight_decay: 0.00003125
 
 ### 4 GPU x 1 batch
-optimizer:
-  type: AdamW
-  params:
-    -
-      params: '^(?=.*.dinov3)(?!.*(?:norm|bn|bias)).*$'
-      lr: 0.00001
-    -
-      params: '^(?=.*.dinov3)(?=.*(?:norm|bn|bias)).*$'
-      lr: 0.00001
-      weight_decay: 0.
-    -
-      params: '^(?=.*(?:sta|encoder|decoder))(?=.*(?:norm|bn|bias)).*$'
-      weight_decay: 0.
+# optimizer:
+#   type: AdamW
+#   params:
+#     -
+#       params: '^(?=.*.dinov3)(?!.*(?:norm|bn|bias)).*$'
+#       lr: 0.00001
+#     -
+#       params: '^(?=.*.dinov3)(?=.*(?:norm|bn|bias)).*$'
+#       lr: 0.00001
+#       weight_decay: 0.
+#     -
+#       params: '^(?=.*(?:sta|encoder|decoder))(?=.*(?:norm|bn|bias)).*$'
+#       weight_decay: 0.
 
-  lr: 0.00025
-  betas: [0.9, 0.999]
-  weight_decay: 0.00003125
+#   lr: 0.00025
+#   betas: [0.9, 0.999]
+#   weight_decay: 0.00003125
 
 train_dataloader:
   dataset:
@@ -129,7 +129,7 @@ train_dataloader:
         epoch: [4, 29, 50]
         ops: ['RandomPhotometricDistort', 'RandomZoomOut', 'RandomIoUCrop']
       mosaic_prob: -0.1
-  total_batch_size: 1 # Total batch size for all GPUs
+  total_batch_size: 3 # Total batch size for all GPUs
   num_workers: 4 # Number of workers per rank/GPU process
 
   collate_fn:
