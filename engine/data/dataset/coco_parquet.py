@@ -67,6 +67,7 @@ class CocoParquetStore:
         self._categories = None
         self._coco = None
         self._ids = None
+        self._preloaded_rows = None
 
         metadata = self.parquet_file.metadata
         if metadata.num_row_groups != metadata.num_rows:
@@ -74,6 +75,7 @@ class CocoParquetStore:
                 f'{self.path} must use one row group per image for random access. '
                 f'Found {metadata.num_row_groups} row groups for {metadata.num_rows} rows.'
             )
+        self._num_rows = metadata.num_rows
 
     @property
     def parquet_file(self):
@@ -87,7 +89,7 @@ class CocoParquetStore:
         return state
 
     def __len__(self):
-        return self.parquet_file.metadata.num_rows
+        return self._num_rows
 
     @property
     def categories(self) -> List[dict]:
@@ -102,18 +104,70 @@ class CocoParquetStore:
     @property
     def ids(self) -> List[int]:
         if self._ids is None:
-            ids = []
-            for row_group in range(len(self)):
-                table = self.parquet_file.read_row_group(row_group, columns=['image_id'])
-                ids.append(int(_to_py(table.column('image_id')[0])))
-            self._ids = ids
+            if self._preloaded_rows is not None:
+                self._ids = [int(row['image_id']) for row in self._preloaded_rows]
+            else:
+                ids = []
+                for row_group in range(len(self)):
+                    table = self.parquet_file.read_row_group(row_group, columns=['image_id'])
+                    ids.append(int(_to_py(table.column('image_id')[0])))
+                self._ids = ids
         return list(self._ids)
 
+    def preload(self, progress: bool = False, progress_desc: Optional[str] = None) -> dict:
+        if self._preloaded_rows is not None:
+            return self.preload_summary
+
+        # Load metadata before closing the Parquet file after preload.
+        _ = self.categories
+
+        rows = []
+        annotation_count = 0
+        row_groups = tqdm(
+            range(len(self)),
+            desc=progress_desc or f'Preloading {Path(self.path).name}',
+            dynamic_ncols=True,
+            unit='image',
+            disable=not progress,
+        )
+        for row_group in row_groups:
+            table = self.parquet_file.read_row_group(row_group, columns=self.COLUMNS)
+            row = {name: _to_py(table.column(name)[0]) for name in self.COLUMNS}
+            row['image_id'] = int(row['image_id'])
+            row['width'] = int(row['width'])
+            row['height'] = int(row['height'])
+            row['annotations'] = json.loads(row.pop('annotations_json'))
+            annotation_count += len(row['annotations'])
+            rows.append(row)
+
+        self._preloaded_rows = rows
+        self._ids = [row['image_id'] for row in rows]
+        self.close()
+        return {
+            'images': len(rows),
+            'annotations': annotation_count,
+            'bytes': sum(len(row['image_bytes']) for row in rows),
+        }
+
+    @property
+    def preload_summary(self) -> dict:
+        if self._preloaded_rows is None:
+            return {'images': 0, 'annotations': 0, 'bytes': 0}
+        return {
+            'images': len(self._preloaded_rows),
+            'annotations': sum(len(row['annotations']) for row in self._preloaded_rows),
+            'bytes': sum(len(row['image_bytes']) for row in self._preloaded_rows),
+        }
+
     def read_item(self, idx: int):
-        table = self.parquet_file.read_row_group(idx, columns=self.COLUMNS)
-        row = {name: _to_py(table.column(name)[0]) for name in self.COLUMNS}
+        if self._preloaded_rows is not None:
+            row = self._preloaded_rows[idx]
+            annotations = copy.deepcopy(row['annotations'])
+        else:
+            table = self.parquet_file.read_row_group(idx, columns=self.COLUMNS)
+            row = {name: _to_py(table.column(name)[0]) for name in self.COLUMNS}
+            annotations = json.loads(row['annotations_json'])
         image = Image.open(BytesIO(row['image_bytes'])).convert('RGB')
-        annotations = json.loads(row['annotations_json'])
         image_id = int(row['image_id'])
         return image, {'image_id': image_id, 'annotations': annotations}
 
@@ -123,17 +177,27 @@ class CocoParquetStore:
 
         images = []
         annotations = []
-        for row_group in range(len(self)):
-            table = self.parquet_file.read_row_group(row_group, columns=self.COCO_COLUMNS)
-            row = {name: _to_py(table.column(name)[0]) for name in self.COCO_COLUMNS}
-            image_id = int(row['image_id'])
-            images.append({
-                'id': image_id,
-                'file_name': row['file_name'],
-                'width': int(row['width']),
-                'height': int(row['height']),
-            })
-            annotations.extend(json.loads(row['annotations_json']))
+        if self._preloaded_rows is not None:
+            for row in self._preloaded_rows:
+                images.append({
+                    'id': int(row['image_id']),
+                    'file_name': row['file_name'],
+                    'width': int(row['width']),
+                    'height': int(row['height']),
+                })
+                annotations.extend(copy.deepcopy(row['annotations']))
+        else:
+            for row_group in range(len(self)):
+                table = self.parquet_file.read_row_group(row_group, columns=self.COCO_COLUMNS)
+                row = {name: _to_py(table.column(name)[0]) for name in self.COCO_COLUMNS}
+                image_id = int(row['image_id'])
+                images.append({
+                    'id': image_id,
+                    'file_name': row['file_name'],
+                    'width': int(row['width']),
+                    'height': int(row['height']),
+                })
+                annotations.extend(json.loads(row['annotations_json']))
 
         coco = COCO()
         coco.dataset = {

@@ -18,6 +18,8 @@ train_dataloader:
     img_folder: ./tools/dataset/wholebody68/images/
     ann_file: ./tools/dataset/wholebody68/annotations/train_ins.parquet
     return_masks: True
+    preload_parquet: True
+    preload_parquet_progress: True
     transforms:
       type: Compose
       ops: ~
@@ -36,6 +38,8 @@ val_dataloader:
     ann_file: ./tools/dataset/wholebody68/annotations/val.parquet
     segm_ann_file: ./tools/dataset/wholebody68/annotations/val_ins.parquet
     return_masks: True
+    preload_parquet: True
+    preload_parquet_progress: True
     transforms:
       type: Compose
       ops: ~
