@@ -18,7 +18,7 @@ dependencies = [
     "onnxruntime-gpu==1.23.0",
     "onnxsim==0.4.30",
     "onnxslim==0.1.69",
-    "pyarrow==12.0.0",
+    "pyarrow==14.0.1",
     "pybind11==3.0.1",
     "pyyaml==6.0.3",
     "scipy==1.16.2",
