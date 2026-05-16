@@ -11,6 +11,9 @@ from engine.deim.box_ops import box_cxcywh_to_xyxy, generalized_box_iou
 
 NUM_CLASSES = 41
 CENTER_CLASS_IDS = [21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 35, 36, 37, 38]
+WHOLEBODY68_NUM_CLASSES = 68
+HAND_CLASS_ID = 32
+HAND_KEYPOINT_CLASS_IDS = list(range(48, 68))
 REPO_ROOT = Path(__file__).resolve().parents[1]
 
 
@@ -54,6 +57,18 @@ def make_logits(class_ids, value=8.0):
     for query_idx, class_id in enumerate(class_ids):
         logits[0, query_idx, class_id] = value
     return logits
+
+
+def make_wholebody68_ignore_criterion(**kwargs):
+    params = dict(
+        num_classes=WHOLEBODY68_NUM_CLASSES,
+        class_negative_ignore_class_ids=HAND_KEYPOINT_CLASS_IDS,
+        class_negative_ignore_parent_class_id=HAND_CLASS_ID,
+        class_negative_ignore_parent_expand_ratio=0.05,
+        class_negative_ignore_require_incomplete_parent=True,
+    )
+    params.update(kwargs)
+    return make_criterion(**params)
 
 
 def test_loss_boxes_switches_center_targets_to_center_and_wh_terms():
@@ -148,6 +163,101 @@ def test_loss_labels_mal_uses_center_quality_for_center_targets():
     center_loss = center_aware.loss_labels_mal(outputs, targets, indices, num_boxes=1)['loss_mal']
 
     assert center_loss.item() < baseline_loss.item()
+
+
+def test_loss_labels_mal_ignores_hand_keypoint_negatives_inside_incomplete_hand():
+    outputs = {
+        'pred_boxes': torch.tensor(
+            [[[0.50, 0.50, 0.05, 0.05], [0.50, 0.50, 0.20, 0.20]]],
+            dtype=torch.float32,
+        ),
+        'pred_logits': torch.zeros((1, 2, WHOLEBODY68_NUM_CLASSES), dtype=torch.float32),
+    }
+    outputs['pred_logits'][0, 0, HAND_KEYPOINT_CLASS_IDS] = 4.0
+    outputs['pred_logits'][0, 1, HAND_CLASS_ID] = 4.0
+    targets = [{
+        'boxes': torch.tensor([[0.50, 0.50, 0.20, 0.20]], dtype=torch.float32),
+        'labels': torch.tensor([HAND_CLASS_ID], dtype=torch.int64),
+    }]
+    indices = [(torch.tensor([1]), torch.tensor([0]))]
+
+    baseline = make_criterion(num_classes=WHOLEBODY68_NUM_CLASSES)
+    ignore = make_wholebody68_ignore_criterion(class_negative_ignore_parent_expand_ratio=0.0)
+
+    baseline_loss = baseline.loss_labels_mal(outputs, targets, indices, num_boxes=1)['loss_mal']
+    ignore_loss = ignore.loss_labels_mal(outputs, targets, indices, num_boxes=1)['loss_mal']
+
+    assert ignore_loss.item() < baseline_loss.item()
+
+
+def test_hand_keypoint_negative_ignore_mask_keeps_outside_queries_and_positives_trainable():
+    criterion = make_wholebody68_ignore_criterion(class_negative_ignore_parent_expand_ratio=0.0)
+    outputs = {
+        'pred_boxes': torch.tensor(
+            [[[0.50, 0.50, 0.05, 0.05], [0.90, 0.90, 0.05, 0.05], [0.50, 0.50, 0.20, 0.20]]],
+            dtype=torch.float32,
+        ),
+    }
+    targets = [{
+        'boxes': torch.tensor(
+            [[0.50, 0.50, 0.20, 0.20], [0.50, 0.50, 0.01, 0.01]],
+            dtype=torch.float32,
+        ),
+        'labels': torch.tensor([HAND_CLASS_ID, 48], dtype=torch.int64),
+    }]
+    target = torch.zeros((1, 3, WHOLEBODY68_NUM_CLASSES), dtype=torch.float32)
+    target[0, 0, 48] = 1.0
+
+    ignore_mask = criterion._build_class_negative_ignore_mask(outputs, targets, target)
+
+    assert not ignore_mask[0, 0, 48].item()
+    assert ignore_mask[0, 0, 49].item()
+    assert not ignore_mask[0, 1, 48].item()
+    assert not ignore_mask[0, 2, HAND_CLASS_ID].item()
+
+
+def test_hand_keypoint_negative_ignore_requires_incomplete_hand_when_configured():
+    criterion = make_wholebody68_ignore_criterion(class_negative_ignore_parent_expand_ratio=0.0)
+    outputs = {
+        'pred_boxes': torch.tensor([[[0.50, 0.50, 0.05, 0.05]]], dtype=torch.float32),
+    }
+    targets = [{
+        'boxes': torch.tensor(
+            [[0.50, 0.50, 0.20, 0.20]] + [[0.50, 0.50, 0.01, 0.01] for _ in HAND_KEYPOINT_CLASS_IDS],
+            dtype=torch.float32,
+        ),
+        'labels': torch.tensor([HAND_CLASS_ID] + HAND_KEYPOINT_CLASS_IDS, dtype=torch.int64),
+    }]
+    target = torch.zeros((1, 1, WHOLEBODY68_NUM_CLASSES), dtype=torch.float32)
+
+    ignore_mask = criterion._build_class_negative_ignore_mask(outputs, targets, target)
+
+    assert not ignore_mask.any()
+
+
+def test_class_negative_ignore_is_backward_compatible_when_disabled():
+    outputs = {
+        'pred_boxes': torch.tensor(
+            [[[0.50, 0.50, 0.05, 0.05], [0.50, 0.50, 0.20, 0.20]]],
+            dtype=torch.float32,
+        ),
+        'pred_logits': torch.zeros((1, 2, WHOLEBODY68_NUM_CLASSES), dtype=torch.float32),
+    }
+    outputs['pred_logits'][0, 0, HAND_KEYPOINT_CLASS_IDS] = 4.0
+    outputs['pred_logits'][0, 1, HAND_CLASS_ID] = 4.0
+    targets = [{
+        'boxes': torch.tensor([[0.50, 0.50, 0.20, 0.20]], dtype=torch.float32),
+        'labels': torch.tensor([HAND_CLASS_ID], dtype=torch.int64),
+    }]
+    indices = [(torch.tensor([1]), torch.tensor([0]))]
+
+    baseline = make_criterion(num_classes=WHOLEBODY68_NUM_CLASSES)
+    disabled = make_wholebody68_ignore_criterion(class_negative_ignore_class_ids=[])
+
+    baseline_loss = baseline.loss_labels_mal(outputs, targets, indices, num_boxes=1)['loss_mal']
+    disabled_loss = disabled.loss_labels_mal(outputs, targets, indices, num_boxes=1)['loss_mal']
+
+    assert disabled_loss.item() == pytest.approx(baseline_loss.item(), rel=1e-6)
 
 
 def test_loss_local_respects_center_local_weight():
@@ -288,6 +398,18 @@ def test_yaml_configs_keep_existing_config_unchanged_and_add_new_center_config()
     assert new_cfg.yaml_cfg.get('center_eval_primary_threshold') == pytest.approx(0.5)
 
 
+def test_wholebody68_config_enables_hand_keypoint_negative_ignore():
+    cfg_path = REPO_ROOT / 'configs/deimv2/deimv2_dinov3_x_wholebody68_ins_s08_maskhead256x3_center.yml'
+
+    cfg = YAMLConfig(str(cfg_path))
+    criterion = cfg.criterion
+
+    assert getattr(criterion, 'class_negative_ignore_class_ids') == HAND_KEYPOINT_CLASS_IDS
+    assert getattr(criterion, 'class_negative_ignore_parent_class_id') == HAND_CLASS_ID
+    assert getattr(criterion, 'class_negative_ignore_parent_expand_ratio') == pytest.approx(0.05)
+    assert getattr(criterion, 'class_negative_ignore_require_incomplete_parent') is True
+
+
 def test_loading_old_extra_state_keeps_current_center_defaults():
     old_criterion = make_criterion()
     state = old_criterion.state_dict()
@@ -296,6 +418,10 @@ def test_loading_old_extra_state_keeps_current_center_defaults():
     state['_extra_state'].pop('center_bbox_wh_weight', None)
     state['_extra_state'].pop('center_giou_weight', None)
     state['_extra_state'].pop('center_local_weight', None)
+    state['_extra_state'].pop('class_negative_ignore_class_ids', None)
+    state['_extra_state'].pop('class_negative_ignore_parent_class_id', None)
+    state['_extra_state'].pop('class_negative_ignore_parent_expand_ratio', None)
+    state['_extra_state'].pop('class_negative_ignore_require_incomplete_parent', None)
 
     new_criterion = make_criterion(
         center_target_class_ids=[21],
@@ -303,6 +429,10 @@ def test_loading_old_extra_state_keeps_current_center_defaults():
         center_bbox_wh_weight=0.25,
         center_giou_weight=0.25,
         center_local_weight=0.0,
+        class_negative_ignore_class_ids=HAND_KEYPOINT_CLASS_IDS,
+        class_negative_ignore_parent_class_id=HAND_CLASS_ID,
+        class_negative_ignore_parent_expand_ratio=0.05,
+        class_negative_ignore_require_incomplete_parent=True,
     )
     new_criterion.load_state_dict(state, strict=True)
 
@@ -311,3 +441,7 @@ def test_loading_old_extra_state_keeps_current_center_defaults():
     assert new_criterion.center_bbox_wh_weight == pytest.approx(0.25)
     assert new_criterion.center_giou_weight == pytest.approx(0.25)
     assert new_criterion.center_local_weight == pytest.approx(0.0)
+    assert new_criterion.class_negative_ignore_class_ids == HAND_KEYPOINT_CLASS_IDS
+    assert new_criterion.class_negative_ignore_parent_class_id == HAND_CLASS_ID
+    assert new_criterion.class_negative_ignore_parent_expand_ratio == pytest.approx(0.05)
+    assert new_criterion.class_negative_ignore_require_incomplete_parent is True

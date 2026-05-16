@@ -54,6 +54,10 @@ class DEIMCriterion(nn.Module):
         center_bbox_wh_weight=1.0,
         center_giou_weight=1.0,
         center_local_weight=1.0,
+        class_negative_ignore_class_ids=None,
+        class_negative_ignore_parent_class_id=None,
+        class_negative_ignore_parent_expand_ratio=0.0,
+        class_negative_ignore_require_incomplete_parent=True,
         ):
         """Create the criterion.
         Parameters:
@@ -95,6 +99,14 @@ class DEIMCriterion(nn.Module):
         self.center_bbox_wh_weight = float(center_bbox_wh_weight)
         self.center_giou_weight = float(center_giou_weight)
         self.center_local_weight = float(center_local_weight)
+        self.class_negative_ignore_class_ids = [] if class_negative_ignore_class_ids is None else [
+            int(x) for x in class_negative_ignore_class_ids
+        ]
+        self.class_negative_ignore_parent_class_id = (
+            None if class_negative_ignore_parent_class_id is None else int(class_negative_ignore_parent_class_id)
+        )
+        self.class_negative_ignore_parent_expand_ratio = float(class_negative_ignore_parent_expand_ratio)
+        self.class_negative_ignore_require_incomplete_parent = bool(class_negative_ignore_require_incomplete_parent)
 
     def get_extra_state(self):
         return {
@@ -122,6 +134,10 @@ class DEIMCriterion(nn.Module):
             'center_bbox_wh_weight': self.center_bbox_wh_weight,
             'center_giou_weight': self.center_giou_weight,
             'center_local_weight': self.center_local_weight,
+            'class_negative_ignore_class_ids': copy.deepcopy(self.class_negative_ignore_class_ids),
+            'class_negative_ignore_parent_class_id': self.class_negative_ignore_parent_class_id,
+            'class_negative_ignore_parent_expand_ratio': self.class_negative_ignore_parent_expand_ratio,
+            'class_negative_ignore_require_incomplete_parent': self.class_negative_ignore_require_incomplete_parent,
         }
 
     def set_extra_state(self, state):
@@ -151,6 +167,21 @@ class DEIMCriterion(nn.Module):
         self.center_bbox_wh_weight = state.get('center_bbox_wh_weight', self.center_bbox_wh_weight)
         self.center_giou_weight = state.get('center_giou_weight', self.center_giou_weight)
         self.center_local_weight = state.get('center_local_weight', self.center_local_weight)
+        self.class_negative_ignore_class_ids = copy.deepcopy(
+            state.get('class_negative_ignore_class_ids', self.class_negative_ignore_class_ids)
+        )
+        self.class_negative_ignore_parent_class_id = state.get(
+            'class_negative_ignore_parent_class_id',
+            self.class_negative_ignore_parent_class_id,
+        )
+        self.class_negative_ignore_parent_expand_ratio = state.get(
+            'class_negative_ignore_parent_expand_ratio',
+            self.class_negative_ignore_parent_expand_ratio,
+        )
+        self.class_negative_ignore_require_incomplete_parent = state.get(
+            'class_negative_ignore_require_incomplete_parent',
+            self.class_negative_ignore_require_incomplete_parent,
+        )
 
     def _matched_target_labels(self, targets, indices, device):
         labels = [t['labels'][j] for t, (_, j) in zip(targets, indices) if len(j) > 0]
@@ -178,6 +209,116 @@ class DEIMCriterion(nn.Module):
     def _center_quality(self, src_boxes: torch.Tensor, target_boxes: torch.Tensor) -> torch.Tensor:
         return (1.0 - self._normalized_center_distance(src_boxes, target_boxes)).clamp(min=0.0, max=1.0)
 
+    def _expand_cxcywh_to_xyxy(self, boxes: torch.Tensor, expand_ratio: float) -> torch.Tensor:
+        centers = boxes[:, :2]
+        half_wh = boxes[:, 2:] * (0.5 + expand_ratio)
+        xyxy = torch.cat([centers - half_wh, centers + half_wh], dim=-1)
+        return xyxy.clamp(min=0.0, max=1.0)
+
+    def _child_centers_inside_boxes(self, child_boxes: torch.Tensor, parent_xyxy: torch.Tensor) -> torch.Tensor:
+        if child_boxes.numel() == 0 or parent_xyxy.numel() == 0:
+            return torch.zeros(
+                (child_boxes.shape[0], parent_xyxy.shape[0]),
+                dtype=torch.bool,
+                device=child_boxes.device,
+            )
+
+        centers = child_boxes[:, :2]
+        return (
+            (centers[:, None, 0] >= parent_xyxy[None, :, 0])
+            & (centers[:, None, 0] <= parent_xyxy[None, :, 2])
+            & (centers[:, None, 1] >= parent_xyxy[None, :, 1])
+            & (centers[:, None, 1] <= parent_xyxy[None, :, 3])
+        )
+
+    def _build_class_negative_ignore_query_mask(self, src_boxes: torch.Tensor, targets) -> torch.Tensor:
+        bs, num_queries = src_boxes.shape[:2]
+        query_mask = torch.zeros((bs, num_queries), dtype=torch.bool, device=src_boxes.device)
+        if (
+            not self.class_negative_ignore_class_ids
+            or self.class_negative_ignore_parent_class_id is None
+            or num_queries == 0
+        ):
+            return query_mask
+
+        ignored_child_ids = set(self.class_negative_ignore_class_ids)
+        for batch_idx, target in enumerate(targets):
+            labels = target.get('labels')
+            boxes = target.get('boxes')
+            if labels is None or boxes is None or labels.numel() == 0:
+                continue
+
+            labels = labels.to(device=src_boxes.device)
+            boxes = boxes.to(device=src_boxes.device)
+            parent_mask = labels == self.class_negative_ignore_parent_class_id
+            if not parent_mask.any():
+                continue
+
+            parent_xyxy = self._expand_cxcywh_to_xyxy(
+                boxes[parent_mask],
+                self.class_negative_ignore_parent_expand_ratio,
+            )
+            eligible_parent_mask = torch.ones(parent_xyxy.shape[0], dtype=torch.bool, device=src_boxes.device)
+
+            if self.class_negative_ignore_require_incomplete_parent:
+                child_mask = torch.zeros_like(labels, dtype=torch.bool)
+                for class_id in ignored_child_ids:
+                    child_mask |= labels == int(class_id)
+
+                if child_mask.any():
+                    child_labels = labels[child_mask]
+                    child_boxes = boxes[child_mask]
+                    inside = self._child_centers_inside_boxes(child_boxes, parent_xyxy)
+                    for parent_idx in range(parent_xyxy.shape[0]):
+                        present_child_ids = set(child_labels[inside[:, parent_idx]].tolist())
+                        if ignored_child_ids.issubset(present_child_ids):
+                            eligible_parent_mask[parent_idx] = False
+
+            if not eligible_parent_mask.any():
+                continue
+
+            eligible_parent_xyxy = parent_xyxy[eligible_parent_mask]
+            query_centers = src_boxes[batch_idx, :, :2]
+            inside_query = (
+                (query_centers[:, None, 0] >= eligible_parent_xyxy[None, :, 0])
+                & (query_centers[:, None, 0] <= eligible_parent_xyxy[None, :, 2])
+                & (query_centers[:, None, 1] >= eligible_parent_xyxy[None, :, 1])
+                & (query_centers[:, None, 1] <= eligible_parent_xyxy[None, :, 3])
+            ).any(dim=1)
+            query_mask[batch_idx] |= inside_query
+
+        return query_mask
+
+    def _build_class_negative_ignore_mask(self, outputs, targets, target: torch.Tensor) -> torch.Tensor:
+        ignore_mask = torch.zeros_like(target, dtype=torch.bool)
+        if (
+            not self.class_negative_ignore_class_ids
+            or self.class_negative_ignore_parent_class_id is None
+            or 'pred_boxes' not in outputs
+        ):
+            return ignore_mask
+
+        src_boxes = outputs['pred_boxes'].detach()
+        query_mask = self._build_class_negative_ignore_query_mask(src_boxes, targets)
+        if not query_mask.any():
+            return ignore_mask
+
+        class_mask = torch.zeros((target.shape[-1],), dtype=torch.bool, device=target.device)
+        for class_id in self.class_negative_ignore_class_ids:
+            if 0 <= int(class_id) < target.shape[-1]:
+                class_mask[int(class_id)] = True
+        if not class_mask.any():
+            return ignore_mask
+
+        return query_mask[:, :, None] & class_mask[None, None, :] & (target <= 0)
+
+    def _apply_class_negative_ignore_to_weight(self, weight: torch.Tensor, outputs, targets, target: torch.Tensor):
+        ignore_mask = self._build_class_negative_ignore_mask(outputs, targets, target)
+        if ignore_mask.any():
+            weight = weight.clone()
+            weight[ignore_mask] = 0.0
+        return weight
+
     def loss_labels_focal(self, outputs, targets, indices, num_boxes):
         assert 'pred_logits' in outputs
         src_logits = outputs['pred_logits']
@@ -188,6 +329,9 @@ class DEIMCriterion(nn.Module):
         target_classes[idx] = target_classes_o
         target = F.one_hot(target_classes, num_classes=self.num_classes+1)[..., :-1]
         loss = torchvision.ops.sigmoid_focal_loss(src_logits, target, self.alpha, self.gamma, reduction='none')
+        ignore_mask = self._build_class_negative_ignore_mask(outputs, targets, target)
+        if ignore_mask.any():
+            loss = loss.masked_fill(ignore_mask, 0.0)
         loss = loss.mean(1).sum() * src_logits.shape[1] / num_boxes
 
         return {'loss_focal': loss}
@@ -216,6 +360,7 @@ class DEIMCriterion(nn.Module):
 
         pred_score = F.sigmoid(src_logits).detach()
         weight = self.alpha * pred_score.pow(self.gamma) * (1 - target) + target_score
+        weight = self._apply_class_negative_ignore_to_weight(weight, outputs, targets, target)
 
         loss = F.binary_cross_entropy_with_logits(src_logits, target_score, weight=weight, reduction='none')
         loss = loss.mean(1).sum() * src_logits.shape[1] / num_boxes
@@ -257,6 +402,7 @@ class DEIMCriterion(nn.Module):
             weight = self.mal_alpha * pred_score.pow(self.gamma) * (1 - target) + target
         else:
             weight = pred_score.pow(self.gamma) * (1 - target) + target
+        weight = self._apply_class_negative_ignore_to_weight(weight, outputs, targets, target)
 
         # print(" ### DEIM-gamma{}-alpha{} ### ".format(self.gamma, self.mal_alpha))
         loss = F.binary_cross_entropy_with_logits(src_logits, target_score, weight=weight, reduction='none')
