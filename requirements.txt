@@ -1,8 +1,10 @@
 torch==2.5.1
 torchvision==0.20.1
 faster-coco-eval>=1.6.7
+pyarrow==14.0.1
 PyYAML
 tensorboard
 scipy
 calflops
+tqdm==4.67.1
 transformers
