@@ -36,7 +36,7 @@ HybridEncoder:
 DEIMTransformer:
   num_layers: 6
   eval_idx: -1
-  num_queries: 1360
+  num_queries: 680
   feat_channels: [256, 256, 256]
   hidden_dim: 256
   dim_feedforward: 2048
@@ -49,7 +49,7 @@ DEIMTransformer:
   aux_mask_feature_level: 0 # 0=stride8, 1=stride16, 2=stride32
 
 PostProcessor:
-  num_top_queries: 1360
+  num_top_queries: 680
   k_max: 0
 
 epoches: 58
