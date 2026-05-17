@@ -97,8 +97,8 @@ train_dataloader:
       policy:
         epoch: [4, 250, 400]
       mosaic_prob: -0.1
-  total_batch_size: 7
-  num_workers: 7
+  total_batch_size: 3
+  num_workers: 6
 
   collate_fn:
     mixup_prob: 0.0
