@@ -293,18 +293,18 @@ class RandomHorizontalFlipWithClass(T.RandomHorizontalFlip):
         inputs = inputs if len(inputs) > 1 else inputs[0]
         flat_inputs, spec = tree_flatten(inputs)
 
-        self.check_inputs(flat_inputs)
+        self._check_inputs_compat(flat_inputs)
 
         if torch.rand(1) >= self.p:
             return inputs
 
         needs_transform_list = self._needs_transform_list(flat_inputs)
-        params = self.make_params(
+        params = self._make_params_compat(
             [inpt for (inpt, needs_transform) in zip(flat_inputs, needs_transform_list) if needs_transform]
         )
 
         flat_outputs = [
-            self.transform(inpt, params) if needs_transform else inpt
+            self._transform_compat(inpt, params) if needs_transform else inpt
             for (inpt, needs_transform) in zip(flat_inputs, needs_transform_list)
         ]
 
@@ -314,6 +314,31 @@ class RandomHorizontalFlipWithClass(T.RandomHorizontalFlip):
             self._swap_class_labels_inplace(outputs)
 
         return outputs
+
+    def _check_inputs_compat(self, flat_inputs: List[Any]) -> None:
+        check_inputs = getattr(self, 'check_inputs', None)
+        if check_inputs is None:
+            check_inputs = getattr(self, '_check_inputs', None)
+        if check_inputs is not None:
+            check_inputs(flat_inputs)
+
+    def _make_params_compat(self, flat_inputs: List[Any]) -> Dict[str, Any]:
+        make_params = getattr(self, 'make_params', None)
+        if make_params is not None:
+            return make_params(flat_inputs)
+
+        get_params = getattr(self, '_get_params', None)
+        if get_params is not None:
+            return get_params(flat_inputs)
+
+        return {}
+
+    def _transform_compat(self, inpt: Any, params: Dict[str, Any]) -> Any:
+        transform = getattr(self, 'transform', None)
+        if transform is not None:
+            return transform(inpt, params)
+
+        return self._transform(inpt, params)
 
     def _swap_class_labels_inplace(self, data: Any) -> None:
         if isinstance(data, dict):
