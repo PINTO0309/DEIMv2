@@ -39,3 +39,28 @@ def test_loss_masks_participates_in_all_reduce_with_no_valid_local_masks(monkeyp
     assert all_reduce_calls[0].tolist() == [0.0]
     assert losses["loss_mask_bce"].item() == 0.0
     assert losses["loss_mask_dice"].item() == 0.0
+
+
+def test_loss_boxes_reports_zero_center_loss_without_local_center_targets():
+    criterion = DEIMCriterion(
+        matcher=None,
+        weight_dict={},
+        losses=["boxes"],
+        num_classes=3,
+        center_target_class_ids=[2],
+    )
+    outputs = {
+        "pred_boxes": torch.tensor([[[0.5, 0.5, 0.2, 0.2]]], requires_grad=True),
+    }
+    targets = [
+        {
+            "labels": torch.tensor([1]),
+            "boxes": torch.tensor([[0.5, 0.5, 0.2, 0.2]]),
+        }
+    ]
+    indices = [(torch.tensor([0]), torch.tensor([0]))]
+
+    losses = criterion.loss_boxes(outputs, targets, indices, num_boxes=1)
+
+    assert set(losses) == {"loss_bbox", "loss_giou", "loss_center"}
+    assert losses["loss_center"].item() == 0.0

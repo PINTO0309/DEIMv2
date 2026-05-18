@@ -439,6 +439,8 @@ class DEIMCriterion(nn.Module):
         if center_target_mask.any():
             loss_center = self._normalized_center_distance(src_boxes, target_boxes)
             losses['loss_center'] = loss_center[center_target_mask].sum() / num_boxes
+        elif self.center_target_class_ids:
+            losses['loss_center'] = src_boxes.sum() * 0
 
         return losses
 
