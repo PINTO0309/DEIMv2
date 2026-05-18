@@ -211,10 +211,20 @@ def reduce_dict(data, avg=True):
         return data
 
     with torch.no_grad():
-        keys, values = [], []
-        for k in sorted(data.keys()):
-            keys.append(k)
-            values.append(data[k])
+        local_keys = sorted(data.keys())
+        gathered_keys = all_gather(local_keys)
+        keys = sorted({key for rank_keys in gathered_keys for key in rank_keys})
+        if not keys:
+            return {}
+
+        if data:
+            zero = next(iter(data.values())).new_zeros(())
+        elif torch.cuda.is_available():
+            zero = torch.zeros((), device=torch.device('cuda', get_local_rank()))
+        else:
+            zero = torch.zeros(())
+
+        values = [data.get(k, zero) for k in keys]
 
         values = torch.stack(values, dim=0)
         torch.distributed.all_reduce(values)

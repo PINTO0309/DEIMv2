@@ -1,6 +1,7 @@
 import torch
 
 import engine.deim.deim_criterion as deim_criterion_module
+import engine.misc.dist_utils as dist_utils
 from engine.deim.deim_criterion import DEIMCriterion
 
 
@@ -64,3 +65,21 @@ def test_loss_boxes_reports_zero_center_loss_without_local_center_targets():
 
     assert set(losses) == {"loss_bbox", "loss_giou", "loss_center"}
     assert losses["loss_center"].item() == 0.0
+
+
+def test_reduce_dict_fills_missing_rank_keys(monkeypatch):
+    reduced_tensors = []
+
+    def fake_all_reduce(tensor):
+        reduced_tensors.append(tensor.clone())
+
+    monkeypatch.setattr(dist_utils, "get_world_size", lambda: 2)
+    monkeypatch.setattr(dist_utils, "all_gather", lambda keys: [["loss_a", "loss_b"], ["loss_a"]])
+    monkeypatch.setattr(torch.distributed, "all_reduce", fake_all_reduce)
+
+    reduced = dist_utils.reduce_dict({"loss_a": torch.tensor(3.0)}, avg=False)
+
+    assert list(reduced.keys()) == ["loss_a", "loss_b"]
+    assert reduced["loss_a"].item() == 3.0
+    assert reduced["loss_b"].item() == 0.0
+    assert reduced_tensors[0].tolist() == [3.0, 0.0]
