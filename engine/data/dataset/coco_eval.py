@@ -488,10 +488,12 @@ def merge(img_ids, eval_imgs):
 
 
     merged_img_ids = np.array(merged_img_ids)
-    merged_eval_imgs = np.concatenate(merged_eval_imgs, axis=2).ravel()
-    # merged_eval_imgs = np.array(merged_eval_imgs).T.ravel()
+    merged_eval_imgs = np.concatenate(merged_eval_imgs, axis=2)
 
-    # keep only unique (and in sorted order) images
+    # keep only unique (and in sorted order) images. DistributedSampler pads
+    # eval datasets when the number of samples is not divisible by world size,
+    # so eval_imgs must be filtered with the same indices as img_ids.
     merged_img_ids, idx = np.unique(merged_img_ids, return_index=True)
+    merged_eval_imgs = merged_eval_imgs[:, :, idx].ravel()
 
     return merged_img_ids.tolist(), merged_eval_imgs.tolist()
