@@ -27,6 +27,10 @@ def _ddp_debug_enabled() -> bool:
     return os.getenv('DEIM_DEBUG_DDP', '').lower() in ('1', 'true', 'yes', 'on')
 
 
+def _ddp_trace_enabled() -> bool:
+    return os.getenv('DEIM_DEBUG_DDP_TRACE', '').lower() in ('1', 'true', 'yes', 'on')
+
+
 def _maybe_sync_for_debug():
     if _ddp_debug_enabled() and torch.cuda.is_available():
         torch.cuda.synchronize()
@@ -53,7 +57,8 @@ def _log_ddp_phase(phase: str, epoch: int, step: int, started_at=None, targets=N
     if not _ddp_debug_enabled():
         return
 
-    _maybe_sync_for_debug()
+    if started_at is not None:
+        _maybe_sync_for_debug()
     elapsed = None if started_at is None else time.time() - started_at
     slow_threshold = float(os.getenv('DEIM_DEBUG_DDP_SLOW_SECONDS', '30'))
     always = os.getenv('DEIM_DEBUG_DDP_VERBOSE', '').lower() in ('1', 'true', 'yes', 'on')
@@ -66,9 +71,14 @@ def _log_ddp_phase(phase: str, epoch: int, step: int, started_at=None, targets=N
     if targets is not None:
         message += ' ' + _target_debug_summary(targets)
     try:
-        print(message, force=True)
+        print(message, force=True, flush=True)
     except TypeError:
-        print(message)
+        print(message, flush=True)
+
+
+def _log_ddp_phase_start(phase: str, epoch: int, step: int, targets=None):
+    if _ddp_trace_enabled():
+        _log_ddp_phase(f'{phase}_start', epoch, step, targets=targets)
 
 
 def train_one_epoch(self_lr_scheduler, lr_scheduler, model: torch.nn.Module, criterion: torch.nn.Module,
@@ -93,6 +103,7 @@ def train_one_epoch(self_lr_scheduler, lr_scheduler, model: torch.nn.Module, cri
 
     for i, (samples, targets) in enumerate(metric_logger.log_every(data_loader, print_freq, header)):
         _log_ddp_phase('batch_loaded', epoch, i, targets=targets)
+        _log_ddp_phase_start('to_device', epoch, i, targets=targets)
         phase_start = time.time()
         samples = samples.to(device)
         targets = [{k: v.to(device) for k, v in t.items()} for t in targets]
@@ -101,6 +112,7 @@ def train_one_epoch(self_lr_scheduler, lr_scheduler, model: torch.nn.Module, cri
         metas = dict(epoch=epoch, step=i, global_step=global_step, epoch_step=len(data_loader))
 
         if use_amp:
+            _log_ddp_phase_start('forward', epoch, i, targets=targets)
             phase_start = time.time()
             with torch.autocast(device_type=str(device), dtype=amp_dtype, cache_enabled=True):
                 outputs = model(samples, targets=targets)
@@ -120,6 +132,7 @@ def train_one_epoch(self_lr_scheduler, lr_scheduler, model: torch.nn.Module, cri
                 optimizer.zero_grad(set_to_none=True)
                 raise FloatingPointError('Non-finite pred_boxes detected during AMP forward pass.')
 
+            _log_ddp_phase_start('criterion', epoch, i, targets=targets)
             phase_start = time.time()
             with torch.autocast(device_type=str(device), enabled=False):
                 loss_dict = criterion(outputs, targets, **metas)
@@ -127,16 +140,19 @@ def train_one_epoch(self_lr_scheduler, lr_scheduler, model: torch.nn.Module, cri
 
             loss = sum(loss_dict.values())
             if scaler is not None:
+                _log_ddp_phase_start('backward', epoch, i, targets=targets)
                 phase_start = time.time()
                 scaler.scale(loss).backward()
                 _log_ddp_phase('backward', epoch, i, phase_start, targets=targets)
 
                 if max_norm > 0:
+                    _log_ddp_phase_start('clip_grad', epoch, i, targets=targets)
                     phase_start = time.time()
                     scaler.unscale_(optimizer)
                     torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm)
                     _log_ddp_phase('clip_grad', epoch, i, phase_start, targets=targets)
 
+                _log_ddp_phase_start('optimizer', epoch, i, targets=targets)
                 phase_start = time.time()
                 scaler.step(optimizer)
                 scaler.update()
@@ -144,44 +160,53 @@ def train_one_epoch(self_lr_scheduler, lr_scheduler, model: torch.nn.Module, cri
                 _log_ddp_phase('optimizer', epoch, i, phase_start, targets=targets)
             else:
                 optimizer.zero_grad()
+                _log_ddp_phase_start('backward', epoch, i, targets=targets)
                 phase_start = time.time()
                 loss.backward()
                 _log_ddp_phase('backward', epoch, i, phase_start, targets=targets)
 
                 if max_norm > 0:
+                    _log_ddp_phase_start('clip_grad', epoch, i, targets=targets)
                     phase_start = time.time()
                     torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm)
                     _log_ddp_phase('clip_grad', epoch, i, phase_start, targets=targets)
 
+                _log_ddp_phase_start('optimizer', epoch, i, targets=targets)
                 phase_start = time.time()
                 optimizer.step()
                 _log_ddp_phase('optimizer', epoch, i, phase_start, targets=targets)
 
         else:
+            _log_ddp_phase_start('forward', epoch, i, targets=targets)
             phase_start = time.time()
             outputs = model(samples, targets=targets)
             _log_ddp_phase('forward', epoch, i, phase_start, targets=targets)
+            _log_ddp_phase_start('criterion', epoch, i, targets=targets)
             phase_start = time.time()
             loss_dict = criterion(outputs, targets, **metas)
             _log_ddp_phase('criterion', epoch, i, phase_start, targets=targets)
 
             loss : torch.Tensor = sum(loss_dict.values())
             optimizer.zero_grad()
+            _log_ddp_phase_start('backward', epoch, i, targets=targets)
             phase_start = time.time()
             loss.backward()
             _log_ddp_phase('backward', epoch, i, phase_start, targets=targets)
 
             if max_norm > 0:
+                _log_ddp_phase_start('clip_grad', epoch, i, targets=targets)
                 phase_start = time.time()
                 torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm)
                 _log_ddp_phase('clip_grad', epoch, i, phase_start, targets=targets)
 
+            _log_ddp_phase_start('optimizer', epoch, i, targets=targets)
             phase_start = time.time()
             optimizer.step()
             _log_ddp_phase('optimizer', epoch, i, phase_start, targets=targets)
 
         # ema
         if ema is not None:
+            _log_ddp_phase_start('ema', epoch, i, targets=targets)
             phase_start = time.time()
             ema.update(model)
             _log_ddp_phase('ema', epoch, i, phase_start, targets=targets)
@@ -192,6 +217,7 @@ def train_one_epoch(self_lr_scheduler, lr_scheduler, model: torch.nn.Module, cri
             if lr_warmup_scheduler is not None:
                 lr_warmup_scheduler.step()
 
+        _log_ddp_phase_start('loss_reduce', epoch, i, targets=targets)
         phase_start = time.time()
         loss_dict_reduced = dist_utils.reduce_dict(loss_dict)
         _log_ddp_phase('loss_reduce', epoch, i, phase_start, targets=targets)
