@@ -564,6 +564,12 @@ class DEIMCriterion(nn.Module):
             )
             valid_masks.append(valid.sum())
 
+        local_num_masks = sum(int(v.item()) for v in valid_masks)
+        num_masks = zero.new_tensor([local_num_masks], dtype=torch.float)
+        if is_dist_available_and_initialized():
+            torch.distributed.all_reduce(num_masks)
+        num_masks = torch.clamp(num_masks / get_world_size(), min=1).item()
+
         if not src_masks_list:
             return self._build_zero_mask_losses(zero)
 
@@ -575,11 +581,6 @@ class DEIMCriterion(nn.Module):
             mode='nearest',
             origin=self.mask_resize_origin,
         )[:, 0].to(device=src_masks.device, dtype=src_masks.dtype)
-
-        num_masks = torch.as_tensor([sum(int(v.item()) for v in valid_masks)], dtype=torch.float, device=src_masks.device)
-        if is_dist_available_and_initialized():
-            torch.distributed.all_reduce(num_masks)
-        num_masks = torch.clamp(num_masks / get_world_size(), min=1).item()
 
         loss_mask_bce = F.binary_cross_entropy_with_logits(src_masks, target_masks, reduction='none')
         loss_mask_bce = loss_mask_bce.flatten(1).mean(1).sum() / num_masks
