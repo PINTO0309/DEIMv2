@@ -105,6 +105,7 @@ SIDE_AWARE_OBJECT_CLASS_IDS = {32, 45}
 
 LEFT_SIDE_COLOR = (0, 128, 0)
 RIGHT_SIDE_COLOR = (255, 0, 255)
+BONE_BBOX_COLOR = (255, 255, 0)
 MASK_CLEANUP_PADDING = 1
 INCLUDE_KEY = '__include__'
 _CENTER_GRID_CACHE: dict[tuple[int, int, int, int, tuple[str, int], torch.dtype], torch.Tensor] = {}
@@ -1832,7 +1833,7 @@ def get_render_color(
     elif classid == 47:
         color = RIGHT_SIDE_COLOR
     elif classid == BONE_CLASS_ID:
-        color = (0, 165, 255)
+        color = BONE_BBOX_COLOR
 
     return color
 
