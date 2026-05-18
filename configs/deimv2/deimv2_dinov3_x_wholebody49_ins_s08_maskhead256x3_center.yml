@@ -54,7 +54,26 @@ PostProcessor:
 
 epoches: 58
 
-### 1 GPU
+# ### 1 GPU
+# optimizer:
+#   type: AdamW
+#   params:
+#     -
+#       params: '^(?=.*.dinov3)(?!.*(?:norm|bn|bias)).*$'
+#       lr: 0.00001
+#     -
+#       params: '^(?=.*.dinov3)(?=.*(?:norm|bn|bias)).*$'
+#       lr: 0.00001
+#       weight_decay: 0.
+#     -
+#       params: '^(?=.*(?:sta|encoder|decoder))(?=.*(?:norm|bn|bias)).*$'
+#       weight_decay: 0.
+
+#   lr: 0.0000625
+#   betas: [0.9, 0.999]
+#   weight_decay: 0.00003125
+
+### 3 GPU, H200/141GB, 2batch x 3
 optimizer:
   type: AdamW
   params:
@@ -69,7 +88,7 @@ optimizer:
       params: '^(?=.*(?:sta|encoder|decoder))(?=.*(?:norm|bn|bias)).*$'
       weight_decay: 0.
 
-  lr: 0.0000625
+  lr: 0.0001875
   betas: [0.9, 0.999]
   weight_decay: 0.00003125
 
@@ -129,7 +148,8 @@ train_dataloader:
         epoch: [4, 29, 50]
         ops: ['RandomPhotometricDistort', 'RandomZoomOut', 'RandomIoUCrop']
       mosaic_prob: -0.1
-  total_batch_size: 1 # 1 GPU
+  # total_batch_size: 1 # 1 GPU
+  total_batch_size: 6 # 3 GPU, H200/141GB, 2batch x 3
   # total_batch_size: 4 # 4 GPU
   # total_batch_size: 8 # 8 GPU
   num_workers: 4
@@ -149,7 +169,8 @@ val_dataloader:
         - {type: Resize, size: [640, 640]}
         - {type: ConvertPILImage, dtype: 'float32', scale: True}
         - {type: Normalize, mean: [0.485, 0.456, 0.406], std: [0.229, 0.224, 0.225]}
-  total_batch_size: 2 # 1 GPU
+  # total_batch_size: 2 # 1 GPU
+  total_batch_size: 6 # 3 GPU, H200/141GB, 2batch x 3
   # total_batch_size: 8 # 4 GPU
   # total_batch_size: 16 # 8 GPU
   num_workers: 4
