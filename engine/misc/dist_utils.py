@@ -12,6 +12,7 @@ import random
 import numpy as np
 import atexit
 import copy
+import datetime
 
 import torch
 import torch.nn as nn
@@ -25,6 +26,15 @@ from torch.distributed.fsdp import FullyShardedDataParallel as FSDP
 from torch.utils.data import DistributedSampler
 # from torch.utils.data.dataloader import DataLoader
 from ..data import DataLoader
+
+
+def get_local_rank():
+    return int(os.getenv('LOCAL_RANK', 0))
+
+
+def _distributed_timeout():
+    minutes = float(os.getenv('DEIM_DISTRIBUTED_TIMEOUT_MINUTES', '30'))
+    return datetime.timedelta(minutes=minutes)
 
 
 def setup_distributed(print_rank: int=0, print_method: str='builtin', seed: int=None, ):
@@ -41,16 +51,25 @@ def setup_distributed(print_rank: int=0, print_method: str='builtin', seed: int=
         LOCAL_RANK = int(os.getenv('LOCAL_RANK', -1))
         WORLD_SIZE = int(os.getenv('WORLD_SIZE', 1))
 
-        # torch.distributed.init_process_group(backend=backend, init_method='env://')
-        torch.distributed.init_process_group(init_method='env://')
+        backend = 'nccl' if torch.cuda.is_available() else 'gloo'
+        torch.distributed.init_process_group(
+            backend=backend,
+            init_method='env://',
+            timeout=_distributed_timeout(),
+        )
         torch.distributed.barrier()
 
         rank = torch.distributed.get_rank()
-        torch.cuda.set_device(rank)
-        torch.cuda.empty_cache()
+        local_rank = int(os.getenv('LOCAL_RANK', rank))
+        if torch.cuda.is_available():
+            torch.cuda.set_device(local_rank)
+            torch.cuda.empty_cache()
         enabled_dist = True
         if get_rank() == print_rank:
-            print('Initialized distributed mode...')
+            print(
+                'Initialized distributed mode '
+                f'(backend={backend}, rank={rank}, local_rank={local_rank}, world_size={WORLD_SIZE})...'
+            )
 
     except Exception:
         enabled_dist = False
@@ -99,7 +118,6 @@ def cleanup():
     """cleanup distributed environment
     """
     if is_dist_available_and_initialized():
-        torch.distributed.barrier()
         torch.distributed.destroy_process_group()
 
 
@@ -135,12 +153,17 @@ def warp_model(
     **kwargs
 ):
     if is_dist_available_and_initialized():
-        rank = get_rank()
+        local_rank = get_local_rank()
         model = nn.SyncBatchNorm.convert_sync_batchnorm(model) if sync_bn else model
         if dist_mode == 'dp':
-            model = DP(model, device_ids=[rank], output_device=rank)
+            model = DP(model, device_ids=[local_rank], output_device=local_rank)
         elif dist_mode == 'ddp':
-            model = DDP(model, device_ids=[rank], output_device=rank, find_unused_parameters=find_unused_parameters)
+            model = DDP(
+                model,
+                device_ids=[local_rank],
+                output_device=local_rank,
+                find_unused_parameters=find_unused_parameters,
+            )
         else:
             raise AttributeError('')
 
