@@ -1456,7 +1456,7 @@ def draw_skeleton(
     image: np.ndarray,
     boxes: List[Box],
     color: Tuple[int, int, int] = (0, 255, 255),
-    max_dist_threshold: float = 500.0,
+    max_dist_threshold: Optional[float] = 500.0,
     keypoint_mask_instance_map: Optional[Dict[int, int]] = None,
 ) -> None:
     person_boxes = [box for box in boxes if box.classid == 0]
@@ -1491,7 +1491,7 @@ def draw_instance_skeleton(
     image: np.ndarray,
     boxes: List[Box],
     color: Tuple[int, int, int],
-    max_dist_threshold: float,
+    max_dist_threshold: Optional[float],
     keypoint_mask_instance_map: Optional[Dict[int, int]] = None,
 ) -> set[Tuple[int, int]]:
     classid_to_boxes: Dict[int, List[Box]] = {}
@@ -1517,7 +1517,7 @@ def draw_instance_skeleton(
         for parent_idx, parent_box in enumerate(parent_list):
             for child_idx, child_box in enumerate(child_list):
                 dist = math.hypot(parent_box.cx - child_box.cx, parent_box.cy - child_box.cy)
-                if dist > max_dist_threshold:
+                if max_dist_threshold is not None and dist > max_dist_threshold:
                     continue
                 if not is_handedness_compatible(parent_box, child_box):
                     continue
@@ -2015,7 +2015,7 @@ def draw_detections(
             image=debug_image,
             boxes=boxes,
             color=(0, 255, 255),
-            max_dist_threshold=300,
+            max_dist_threshold=None,
             keypoint_mask_instance_map=keypoint_mask_instance_map,
         )
 
