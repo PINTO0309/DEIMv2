@@ -55,6 +55,7 @@ BONE_EDGE_PAIRS = (
     (35, 37),
     (37, 40),
     (40, 43),
+    (39, 42),
     (35, 38),
     (38, 41),
     (41, 44),
@@ -1470,7 +1471,7 @@ def draw_skeleton(
                     box.person_id = person_box.person_id
                     break
 
-    assigned_keypoint_ids = draw_instance_skeleton(
+    assigned_line_keys = draw_instance_skeleton(
         image=image,
         boxes=boxes,
         color=color,
@@ -1482,7 +1483,7 @@ def draw_skeleton(
         boxes=boxes,
         color=color,
         keypoint_mask_instance_map=keypoint_mask_instance_map,
-        assigned_keypoint_ids=assigned_keypoint_ids,
+        assigned_line_keys=assigned_line_keys,
     )
 
 
@@ -1492,7 +1493,7 @@ def draw_instance_skeleton(
     color: Tuple[int, int, int],
     max_dist_threshold: float,
     keypoint_mask_instance_map: Optional[Dict[int, int]] = None,
-) -> set[int]:
+) -> set[Tuple[int, int]]:
     classid_to_boxes: Dict[int, List[Box]] = {}
     for box in boxes:
         classid_to_boxes.setdefault(box.classid, []).append(box)
@@ -1506,7 +1507,10 @@ def draw_instance_skeleton(
         if not parent_list or not child_list:
             continue
 
-        parent_capacity = [repeat_count] * len(parent_list)
+        parent_capacity = [
+            1 if parent_box.handedness >= 0 else repeat_count
+            for parent_box in parent_list
+        ]
         child_used = [False] * len(child_list)
         pair_candidates: List[Tuple[int, float, int, int]] = []
 
@@ -1541,12 +1545,11 @@ def draw_instance_skeleton(
                 parent_capacity[parent_idx] -= 1
                 child_used[child_idx] = True
 
-    assigned_keypoint_ids: set[int] = set()
+    assigned_line_keys: set[Tuple[int, int]] = set()
     for parent_box, child_box in lines_to_draw:
         cv2.line(image, (parent_box.cx, parent_box.cy), (child_box.cx, child_box.cy), color, thickness=2)
-        assigned_keypoint_ids.add(id(parent_box))
-        assigned_keypoint_ids.add(id(child_box))
-    return assigned_keypoint_ids
+        assigned_line_keys.add(tuple(sorted((id(parent_box), id(child_box)))))
+    return assigned_line_keys
 
 
 def draw_bone_supported_skeleton(
@@ -1554,7 +1557,7 @@ def draw_bone_supported_skeleton(
     boxes: List[Box],
     color: Tuple[int, int, int],
     keypoint_mask_instance_map: Optional[Dict[int, int]],
-    assigned_keypoint_ids: set[int],
+    assigned_line_keys: set[Tuple[int, int]],
 ) -> None:
     bone_boxes = [box for box in boxes if box.classid == BONE_CLASS_ID]
     if not bone_boxes:
@@ -1581,7 +1584,7 @@ def draw_bone_supported_skeleton(
                         first_box,
                         second_box,
                         keypoint_mask_instance_map=keypoint_mask_instance_map,
-                        assigned_keypoint_ids=assigned_keypoint_ids,
+                        assigned_line_keys=assigned_line_keys,
                     )
                     if score is None:
                         continue
@@ -1608,12 +1611,10 @@ def bone_supported_edge_score(
     first_box: Box,
     second_box: Box,
     keypoint_mask_instance_map: Optional[Dict[int, int]] = None,
-    assigned_keypoint_ids: Optional[set[int]] = None,
+    assigned_line_keys: Optional[set[Tuple[int, int]]] = None,
 ) -> Optional[float]:
-    if assigned_keypoint_ids is not None and (
-        id(first_box) in assigned_keypoint_ids
-        or id(second_box) in assigned_keypoint_ids
-    ):
+    pair_key = tuple(sorted((id(first_box), id(second_box))))
+    if assigned_line_keys is not None and pair_key in assigned_line_keys:
         return None
     if not keypoint_inside_box(first_box, bone_box) or not keypoint_inside_box(second_box, bone_box):
         return None
@@ -1621,9 +1622,9 @@ def bone_supported_edge_score(
         first_mask_instance = keypoint_mask_instance_map.get(id(first_box))
         second_mask_instance = keypoint_mask_instance_map.get(id(second_box))
         if (
-            first_mask_instance is None
-            or second_mask_instance is None
-            or first_mask_instance != second_mask_instance
+            first_mask_instance is not None
+            and second_mask_instance is not None
+            and first_mask_instance != second_mask_instance
         ):
             return None
     elif first_box.person_id != second_box.person_id or first_box.person_id < 0:
