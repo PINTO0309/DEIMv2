@@ -54,7 +54,7 @@ PostProcessor:
 
 epoches: 58
 
-### 1 GPU, GH200/96GB, 1batch x 1
+### 1 GPU, GH200/96GB, 1batch x 1, fine-tuning
 optimizer:
   type: AdamW
   params:
