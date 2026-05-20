@@ -1602,8 +1602,67 @@ def draw_bone_supported_skeleton(
         if pair_key not in selected_lines or score > selected_lines[pair_key][0]:
             selected_lines[pair_key] = (score, point_a, point_b)
 
-    for _, point_a, point_b in selected_lines.values():
+    for pair_key, (_, point_a, point_b) in selected_lines.items():
         cv2.line(image, point_a, point_b, color, thickness=2)
+        assigned_line_keys.add(pair_key)
+
+    draw_bone_fallback_skeleton(
+        image=image,
+        color=color,
+        bone_boxes=bone_boxes,
+        classid_to_boxes=classid_to_boxes,
+        keypoint_mask_instance_map=keypoint_mask_instance_map,
+        assigned_line_keys=assigned_line_keys,
+    )
+
+
+def draw_bone_fallback_skeleton(
+    image: np.ndarray,
+    color: Tuple[int, int, int],
+    bone_boxes: List[Box],
+    classid_to_boxes: Dict[int, List[Box]],
+    keypoint_mask_instance_map: Optional[Dict[int, int]],
+    assigned_line_keys: set[Tuple[int, int]],
+) -> None:
+    fallback_edge_pairs = tuple(dict.fromkeys(EDGES))
+    selected_lines: Dict[Tuple[int, int], Tuple[float, Tuple[int, int], Tuple[int, int]]] = {}
+
+    for bone_box in bone_boxes:
+        best_candidate: Optional[Tuple[float, Box, Box]] = None
+        for first_id, second_id in fallback_edge_pairs:
+            first_list = classid_to_boxes.get(first_id, [])
+            second_list = classid_to_boxes.get(second_id, [])
+            if not first_list or not second_list:
+                continue
+
+            for first_box in first_list:
+                for second_box in second_list:
+                    score = bone_supported_edge_score(
+                        bone_box,
+                        first_box,
+                        second_box,
+                        keypoint_mask_instance_map=keypoint_mask_instance_map,
+                        assigned_line_keys=assigned_line_keys,
+                    )
+                    if score is None:
+                        continue
+                    candidate = (score, first_box, second_box)
+                    if best_candidate is None or candidate[0] > best_candidate[0]:
+                        best_candidate = candidate
+
+        if best_candidate is None:
+            continue
+
+        score, first_box, second_box = best_candidate
+        pair_key = tuple(sorted((id(first_box), id(second_box))))
+        point_a = (first_box.cx, first_box.cy)
+        point_b = (second_box.cx, second_box.cy)
+        if pair_key not in selected_lines or score > selected_lines[pair_key][0]:
+            selected_lines[pair_key] = (score, point_a, point_b)
+
+    for pair_key, (_, point_a, point_b) in selected_lines.items():
+        cv2.line(image, point_a, point_b, color, thickness=2)
+        assigned_line_keys.add(pair_key)
 
 
 def bone_supported_edge_score(
@@ -1618,16 +1677,7 @@ def bone_supported_edge_score(
         return None
     if not keypoint_inside_box(first_box, bone_box) or not keypoint_inside_box(second_box, bone_box):
         return None
-    if keypoint_mask_instance_map is not None:
-        first_mask_instance = keypoint_mask_instance_map.get(id(first_box))
-        second_mask_instance = keypoint_mask_instance_map.get(id(second_box))
-        if (
-            first_mask_instance is not None
-            and second_mask_instance is not None
-            and first_mask_instance != second_mask_instance
-        ):
-            return None
-    elif first_box.person_id != second_box.person_id or first_box.person_id < 0:
+    if not keypoints_share_instance_or_person(first_box, second_box, keypoint_mask_instance_map):
         return None
 
     width = max(1, bone_box.x2 - bone_box.x1)
@@ -1657,6 +1707,22 @@ def bone_supported_edge_score(
         return None
 
     return float(bone_box.score) * 1000.0 + long_axis_separation - center_offset
+
+
+def keypoints_share_instance_or_person(
+    first_box: Box,
+    second_box: Box,
+    keypoint_mask_instance_map: Optional[Dict[int, int]],
+) -> bool:
+    if keypoint_mask_instance_map is not None:
+        first_mask_instance = keypoint_mask_instance_map.get(id(first_box))
+        second_mask_instance = keypoint_mask_instance_map.get(id(second_box))
+        return (
+            first_mask_instance is None
+            or second_mask_instance is None
+            or first_mask_instance == second_mask_instance
+        )
+    return first_box.person_id == second_box.person_id and first_box.person_id >= 0
 
 
 def keypoint_inside_box(keypoint_box: Box, container_box: Box, padding: int = 1) -> bool:
