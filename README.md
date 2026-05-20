@@ -392,7 +392,7 @@ if [ "$status" -ne 0 ] && is_oom_log train_initial.log; then
   done
 fi
 
-exit "$status"
+echo "Training finished with status=$status"
 ```
 
 <!-- <summary>2. Testing </summary> -->
