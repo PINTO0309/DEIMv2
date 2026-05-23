@@ -1452,6 +1452,67 @@ def is_handedness_compatible(parent_box: Box, child_box: Box) -> bool:
     return True
 
 
+def box_area(box: Box) -> int:
+    return max(0, box.x2 - box.x1) * max(0, box.y2 - box.y1)
+
+
+def suppress_duplicate_skeleton_keypoints(
+    boxes: List[Box],
+    keypoint_mask_instance_map: Optional[Dict[int, int]] = None,
+) -> List[Box]:
+    body_by_source_idx = {
+        int(box.source_idx): box
+        for box in boxes
+        if box.classid == BODY_CLASS_ID and box.source_idx >= 0
+    }
+    body_by_person_id = {
+        int(box.person_id): box
+        for box in boxes
+        if box.classid == BODY_CLASS_ID and box.person_id >= 0
+    }
+    selected_keypoints: Dict[Tuple[str, int, int, int], Tuple[Box, float, float]] = {}
+    passthrough_keypoint_ids: set[int] = set()
+
+    for box in boxes:
+        if box.classid not in SKELETON_ASSIGNMENT_KEYPOINT_IDS:
+            continue
+
+        if keypoint_mask_instance_map is not None:
+            instance_id = keypoint_mask_instance_map.get(id(box))
+            if instance_id is None:
+                passthrough_keypoint_ids.add(id(box))
+                continue
+            body_box = body_by_source_idx.get(int(instance_id))
+            instance_key = ('mask', int(instance_id), box.classid, box.handedness)
+        else:
+            if box.person_id is None or box.person_id < 0:
+                passthrough_keypoint_ids.add(id(box))
+                continue
+            body_box = body_by_person_id.get(int(box.person_id))
+            instance_key = ('person', int(box.person_id), box.classid, box.handedness)
+
+        body_area = box_area(body_box) if body_box is not None else 0
+        if body_area <= 0:
+            passthrough_keypoint_ids.add(id(box))
+            continue
+
+        area_ratio = box_area(box) / float(body_area)
+        candidate = (box, area_ratio, float(box.score))
+        current = selected_keypoints.get(instance_key)
+        if current is None or (area_ratio, float(box.score)) > (current[1], current[2]):
+            selected_keypoints[instance_key] = candidate
+
+    selected_keypoint_ids = {id(candidate[0]) for candidate in selected_keypoints.values()}
+    return [
+        box for box in boxes
+        if (
+            box.classid not in SKELETON_ASSIGNMENT_KEYPOINT_IDS
+            or id(box) in selected_keypoint_ids
+            or id(box) in passthrough_keypoint_ids
+        )
+    ]
+
+
 def draw_skeleton(
     image: np.ndarray,
     boxes: List[Box],
@@ -1471,16 +1532,28 @@ def draw_skeleton(
                     box.person_id = person_box.person_id
                     break
 
+    skeleton_boxes = suppress_duplicate_skeleton_keypoints(
+        boxes=boxes,
+        keypoint_mask_instance_map=keypoint_mask_instance_map,
+    )
+    person_skeleton_boxes = suppress_duplicate_skeleton_keypoints(boxes=boxes)
     assigned_line_keys = draw_instance_skeleton(
         image=image,
-        boxes=boxes,
+        boxes=skeleton_boxes,
         color=color,
         max_dist_threshold=max_dist_threshold,
         keypoint_mask_instance_map=keypoint_mask_instance_map,
     )
     draw_bone_supported_skeleton(
         image=image,
-        boxes=boxes,
+        boxes=skeleton_boxes,
+        color=color,
+        keypoint_mask_instance_map=keypoint_mask_instance_map,
+        assigned_line_keys=assigned_line_keys,
+    )
+    draw_bone_mask_mismatch_rescue_skeleton(
+        image=image,
+        boxes=person_skeleton_boxes,
         color=color,
         keypoint_mask_instance_map=keypoint_mask_instance_map,
         assigned_line_keys=assigned_line_keys,
@@ -1663,6 +1736,94 @@ def draw_bone_fallback_skeleton(
     for pair_key, (_, point_a, point_b) in selected_lines.items():
         cv2.line(image, point_a, point_b, color, thickness=2)
         assigned_line_keys.add(pair_key)
+
+
+def draw_bone_mask_mismatch_rescue_skeleton(
+    image: np.ndarray,
+    boxes: List[Box],
+    color: Tuple[int, int, int],
+    keypoint_mask_instance_map: Optional[Dict[int, int]],
+    assigned_line_keys: set[Tuple[int, int]],
+) -> None:
+    if keypoint_mask_instance_map is None:
+        return
+
+    bone_boxes = [box for box in boxes if box.classid == BONE_CLASS_ID]
+    if not bone_boxes:
+        return
+
+    classid_to_boxes: Dict[int, List[Box]] = {}
+    for box in boxes:
+        classid_to_boxes.setdefault(box.classid, []).append(box)
+
+    rescue_edge_pairs = tuple(dict.fromkeys(EDGES))
+    selected_lines: Dict[Tuple[int, int], Tuple[float, Tuple[int, int], Tuple[int, int]]] = {}
+
+    for bone_box in bone_boxes:
+        best_candidate: Optional[Tuple[float, Box, Box]] = None
+        for first_id, second_id in rescue_edge_pairs:
+            first_list = classid_to_boxes.get(first_id, [])
+            second_list = classid_to_boxes.get(second_id, [])
+            if not first_list or not second_list:
+                continue
+
+            for first_box in first_list:
+                for second_box in second_list:
+                    score = bone_mask_mismatch_rescue_edge_score(
+                        bone_box,
+                        first_box,
+                        second_box,
+                        keypoint_mask_instance_map=keypoint_mask_instance_map,
+                        assigned_line_keys=assigned_line_keys,
+                    )
+                    if score is None:
+                        continue
+                    candidate = (score, first_box, second_box)
+                    if best_candidate is None or candidate[0] > best_candidate[0]:
+                        best_candidate = candidate
+
+        if best_candidate is None:
+            continue
+
+        score, first_box, second_box = best_candidate
+        pair_key = tuple(sorted((id(first_box), id(second_box))))
+        point_a = (first_box.cx, first_box.cy)
+        point_b = (second_box.cx, second_box.cy)
+        if pair_key not in selected_lines or score > selected_lines[pair_key][0]:
+            selected_lines[pair_key] = (score, point_a, point_b)
+
+    for pair_key, (_, point_a, point_b) in selected_lines.items():
+        cv2.line(image, point_a, point_b, color, thickness=2)
+        assigned_line_keys.add(pair_key)
+
+
+def bone_mask_mismatch_rescue_edge_score(
+    bone_box: Box,
+    first_box: Box,
+    second_box: Box,
+    keypoint_mask_instance_map: Dict[int, int],
+    assigned_line_keys: set[Tuple[int, int]],
+) -> Optional[float]:
+    pair_key = tuple(sorted((id(first_box), id(second_box))))
+    if pair_key in assigned_line_keys:
+        return None
+    if not is_handedness_compatible(first_box, second_box):
+        return None
+    if first_box.person_id != second_box.person_id or first_box.person_id < 0:
+        return None
+
+    first_mask_instance = keypoint_mask_instance_map.get(id(first_box))
+    second_mask_instance = keypoint_mask_instance_map.get(id(second_box))
+    if first_mask_instance is None or second_mask_instance is None or first_mask_instance == second_mask_instance:
+        return None
+
+    return bone_supported_edge_score(
+        bone_box,
+        first_box,
+        second_box,
+        keypoint_mask_instance_map=None,
+        assigned_line_keys=assigned_line_keys,
+    )
 
 
 def bone_supported_edge_score(
