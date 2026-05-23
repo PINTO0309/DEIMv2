@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Convert wholebody68 COCO JSON annotations to image-row Parquet files."""
+"""Convert wholebody69 COCO JSON annotations to image-row Parquet files."""
 
 import argparse
 import importlib.util
@@ -21,12 +21,12 @@ def load_coco_parquet_helpers():
 
 def parse_args():
     parser = argparse.ArgumentParser(
-        description='Convert wholebody68 COCO JSON files to Parquet with embedded image bytes.'
+        description='Convert wholebody69 COCO JSON files to Parquet with embedded image bytes.'
     )
     parser.add_argument(
         '--dataset-root',
         type=Path,
-        default=Path('tools/dataset/wholebody68'),
+        default=Path('tools/dataset/wholebody69'),
         help='Directory containing images/ and annotations/.',
     )
     parser.add_argument(
