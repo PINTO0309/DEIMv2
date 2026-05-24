@@ -4,6 +4,7 @@ PyTorch checkpoint demo for DEIMv2 wholebody49 instance segmentation.
 
 import argparse
 import copy
+import heapq
 import importlib
 import json
 import math
@@ -128,6 +129,10 @@ SKELETON_CONNECTION_DEGREE_LIMITS = Counter(
     for class_id in edge
 )
 SKELETON_NATURAL_CONNECTION_KEYS = _unique_undirected_edges(tuple(EDGES) + tuple(BONE_EDGE_PAIRS))
+SKELETON_NATURAL_NEIGHBOR_CLASS_IDS: Dict[int, set[int]] = {}
+for _first_class_id, _second_class_id in SKELETON_NATURAL_CONNECTION_KEYS:
+    SKELETON_NATURAL_NEIGHBOR_CLASS_IDS.setdefault(_first_class_id, set()).add(_second_class_id)
+    SKELETON_NATURAL_NEIGHBOR_CLASS_IDS.setdefault(_second_class_id, set()).add(_first_class_id)
 
 
 def merge_dict(dct: Dict[str, Any], another_dct: Dict[str, Any], inplace: bool = True) -> Dict[str, Any]:
@@ -480,7 +485,11 @@ class SkeletonLineRegistry:
 
     @staticmethod
     def line_key(first_box: Box, second_box: Box) -> Tuple[int, int]:
-        return tuple(sorted((id(first_box), id(second_box))))
+        first_id = id(first_box)
+        second_id = id(second_box)
+        if first_id < second_id:
+            return (first_id, second_id)
+        return (second_id, first_id)
 
     @staticmethod
     def endpoint_limit(box: Box) -> int:
@@ -488,8 +497,7 @@ class SkeletonLineRegistry:
 
     @staticmethod
     def endpoint_neighbor_slot_key(endpoint_box: Box, neighbor_box: Box) -> Optional[Tuple[int, int, int]]:
-        edge_key = tuple(sorted((endpoint_box.classid, neighbor_box.classid)))
-        if edge_key not in SKELETON_NATURAL_CONNECTION_KEYS:
+        if neighbor_box.classid not in SKELETON_NATURAL_NEIGHBOR_CLASS_IDS.get(endpoint_box.classid, ()):
             return None
 
         neighbor_side_slot = -1
@@ -1779,8 +1787,10 @@ def draw_instance_skeleton(
 
         for parent_idx, parent_box in enumerate(parent_list):
             for child_idx, child_box in enumerate(child_list):
-                dist = math.hypot(parent_box.cx - child_box.cx, parent_box.cy - child_box.cy)
-                if max_dist_threshold is not None and dist > max_dist_threshold:
+                dx = parent_box.cx - child_box.cx
+                dy = parent_box.cy - child_box.cy
+                dist_sq = dx * dx + dy * dy
+                if max_dist_threshold is not None and dist_sq > max_dist_threshold * max_dist_threshold:
                     continue
                 if not is_handedness_compatible(parent_box, child_box):
                     continue
@@ -1800,9 +1810,9 @@ def draw_instance_skeleton(
                         or parent_mask_instance != child_mask_instance
                     ):
                         continue
-                    pair_candidates.append((0, dist, parent_idx, child_idx))
+                    pair_candidates.append((0, dist_sq, parent_idx, child_idx))
                 elif parent_box.person_id == child_box.person_id and parent_box.person_id is not None:
-                    pair_candidates.append((0, dist, parent_idx, child_idx))
+                    pair_candidates.append((0, dist_sq, parent_idx, child_idx))
 
         pair_candidates.sort(key=lambda item: (item[0], item[1], item[2], item[3]))
 
@@ -1840,6 +1850,116 @@ def is_low_quality_mixed_keypoint(quality: Optional[KeypointInstanceQuality]) ->
     )
 
 
+def build_bone_inside_classid_to_boxes(
+    bone_box: Box,
+    classid_to_boxes: Dict[int, List[Box]],
+    target_class_ids: set[int],
+) -> Dict[int, List[Box]]:
+    return {
+        class_id: [
+            box
+            for box in classid_to_boxes.get(class_id, [])
+            if keypoint_inside_box(box, bone_box)
+        ]
+        for class_id in target_class_ids
+    }
+
+
+def bone_candidate_heap_key(
+    candidate: Tuple[int, int, float, int, Box, Box],
+) -> Tuple[int, int, float, int]:
+    slot_priority, clean_priority, score, candidate_order, _, _ = candidate
+    return (-slot_priority, -clean_priority, -score, candidate_order)
+
+
+def build_bone_candidate_lists(
+    bone_boxes: List[Box],
+    classid_to_boxes: Dict[int, List[Box]],
+    edge_pairs: Sequence[Tuple[int, int]],
+    keypoint_mask_instance_map: Optional[Dict[int, int]],
+    keypoint_instance_quality_map: Optional[Dict[int, KeypointInstanceQuality]],
+    line_registry: SkeletonLineRegistry,
+) -> List[List[Tuple[int, int, float, int, Box, Box]]]:
+    target_class_ids = {class_id for edge in edge_pairs for class_id in edge}
+    candidate_order = 0
+    candidate_lists: List[List[Tuple[int, int, float, int, Box, Box]]] = []
+
+    for bone_box in bone_boxes:
+        bone_candidates: List[Tuple[int, int, float, int, Box, Box]] = []
+        inside_classid_to_boxes = build_bone_inside_classid_to_boxes(
+            bone_box,
+            classid_to_boxes,
+            target_class_ids,
+        )
+        for first_id, second_id in edge_pairs:
+            first_list = inside_classid_to_boxes.get(first_id, [])
+            second_list = inside_classid_to_boxes.get(second_id, [])
+            if not first_list or not second_list:
+                continue
+
+            for first_box in first_list:
+                for second_box in second_list:
+                    score = bone_supported_edge_score_after_inside_check(
+                        bone_box,
+                        first_box,
+                        second_box,
+                        keypoint_mask_instance_map=keypoint_mask_instance_map,
+                        keypoint_instance_quality_map=keypoint_instance_quality_map,
+                        allow_mixed_instance_override=True,
+                        line_registry=line_registry,
+                    )
+                    if score is None:
+                        candidate_order += 1
+                        continue
+                    clean_priority = bone_candidate_clean_priority(
+                        first_box,
+                        second_box,
+                        keypoint_instance_quality_map,
+                    )
+                    slot_priority = line_registry.connection_slot_priority(first_box, second_box)
+                    bone_candidates.append(
+                        (slot_priority, clean_priority, score, candidate_order, first_box, second_box)
+                    )
+                    candidate_order += 1
+
+        bone_candidates.sort(key=bone_candidate_heap_key)
+        candidate_lists.append(bone_candidates)
+
+    return candidate_lists
+
+
+def draw_bone_candidate_lists(
+    image: np.ndarray,
+    color: Tuple[int, int, int],
+    candidate_lists: List[List[Tuple[int, int, float, int, Box, Box]]],
+    line_registry: SkeletonLineRegistry,
+) -> None:
+    candidate_heap: List[Tuple[int, int, float, int, int, int]] = []
+    for bone_index, bone_candidates in enumerate(candidate_lists):
+        if bone_candidates:
+            heapq.heappush(candidate_heap, (*bone_candidate_heap_key(bone_candidates[0]), bone_index, 0))
+
+    used_bone_indices: set[int] = set()
+    while candidate_heap:
+        _, _, _, _, bone_index, candidate_index = heapq.heappop(candidate_heap)
+        if bone_index in used_bone_indices:
+            continue
+
+        bone_candidates = candidate_lists[bone_index]
+        _, _, _, _, first_box, second_box = bone_candidates[candidate_index]
+        if line_registry.add(first_box, second_box):
+            used_bone_indices.add(bone_index)
+            cv2.line(image, (first_box.cx, first_box.cy), (second_box.cx, second_box.cy), color, thickness=2)
+            continue
+
+        next_candidate_index = candidate_index + 1
+        if next_candidate_index < len(bone_candidates):
+            heapq.heappush(
+                candidate_heap,
+                (*bone_candidate_heap_key(bone_candidates[next_candidate_index]), bone_index, next_candidate_index),
+            )
+
+
 def draw_bone_supported_skeleton(
     image: np.ndarray,
     boxes: List[Box],
@@ -1857,47 +1977,20 @@ def draw_bone_supported_skeleton(
     if not bone_boxes:
         return bone_boxes, classid_to_boxes
 
-    candidates: List[Tuple[int, int, float, int, Box, Box]] = []
-
-    for bone_index, bone_box in enumerate(bone_boxes):
-        for first_id, second_id in BONE_EDGE_PAIRS:
-            first_list = classid_to_boxes.get(first_id, [])
-            second_list = classid_to_boxes.get(second_id, [])
-            if not first_list or not second_list:
-                continue
-
-            for first_box in first_list:
-                for second_box in second_list:
-                    score = bone_supported_edge_score(
-                        bone_box,
-                        first_box,
-                        second_box,
-                        keypoint_mask_instance_map=keypoint_mask_instance_map,
-                        keypoint_instance_quality_map=keypoint_instance_quality_map,
-                        allow_mixed_instance_override=True,
-                        line_registry=line_registry,
-                    )
-                    if score is None:
-                        continue
-                    clean_priority = bone_candidate_clean_priority(
-                        first_box,
-                        second_box,
-                        keypoint_instance_quality_map,
-                    )
-                    slot_priority = line_registry.connection_slot_priority(first_box, second_box)
-                    candidates.append((slot_priority, clean_priority, score, bone_index, first_box, second_box))
-
-    used_bone_indices: set[int] = set()
-    for _, _, _, bone_index, first_box, second_box in sorted(
-        candidates,
-        key=lambda item: item[:3],
-        reverse=True,
-    ):
-        if bone_index in used_bone_indices:
-            continue
-        if line_registry.add(first_box, second_box):
-            used_bone_indices.add(bone_index)
-            cv2.line(image, (first_box.cx, first_box.cy), (second_box.cx, second_box.cy), color, thickness=2)
+    candidate_lists = build_bone_candidate_lists(
+        bone_boxes=bone_boxes,
+        classid_to_boxes=classid_to_boxes,
+        edge_pairs=BONE_EDGE_PAIRS,
+        keypoint_mask_instance_map=keypoint_mask_instance_map,
+        keypoint_instance_quality_map=keypoint_instance_quality_map,
+        line_registry=line_registry,
+    )
+    draw_bone_candidate_lists(
+        image=image,
+        color=color,
+        candidate_lists=candidate_lists,
+        line_registry=line_registry,
+    )
 
     return bone_boxes, classid_to_boxes
 
@@ -1928,47 +2021,20 @@ def draw_bone_fallback_skeleton(
     line_registry: SkeletonLineRegistry,
 ) -> None:
     fallback_edge_pairs = tuple(dict.fromkeys(EDGES))
-    candidates: List[Tuple[int, int, float, int, Box, Box]] = []
-
-    for bone_index, bone_box in enumerate(bone_boxes):
-        for first_id, second_id in fallback_edge_pairs:
-            first_list = classid_to_boxes.get(first_id, [])
-            second_list = classid_to_boxes.get(second_id, [])
-            if not first_list or not second_list:
-                continue
-
-            for first_box in first_list:
-                for second_box in second_list:
-                    score = bone_supported_edge_score(
-                        bone_box,
-                        first_box,
-                        second_box,
-                        keypoint_mask_instance_map=keypoint_mask_instance_map,
-                        keypoint_instance_quality_map=keypoint_instance_quality_map,
-                        allow_mixed_instance_override=True,
-                        line_registry=line_registry,
-                    )
-                    if score is None:
-                        continue
-                    clean_priority = bone_candidate_clean_priority(
-                        first_box,
-                        second_box,
-                        keypoint_instance_quality_map,
-                    )
-                    slot_priority = line_registry.connection_slot_priority(first_box, second_box)
-                    candidates.append((slot_priority, clean_priority, score, bone_index, first_box, second_box))
-
-    used_bone_indices: set[int] = set()
-    for _, _, _, bone_index, first_box, second_box in sorted(
-        candidates,
-        key=lambda item: item[:3],
-        reverse=True,
-    ):
-        if bone_index in used_bone_indices:
-            continue
-        if line_registry.add(first_box, second_box):
-            used_bone_indices.add(bone_index)
-            cv2.line(image, (first_box.cx, first_box.cy), (second_box.cx, second_box.cy), color, thickness=2)
+    candidate_lists = build_bone_candidate_lists(
+        bone_boxes=bone_boxes,
+        classid_to_boxes=classid_to_boxes,
+        edge_pairs=fallback_edge_pairs,
+        keypoint_mask_instance_map=keypoint_mask_instance_map,
+        keypoint_instance_quality_map=keypoint_instance_quality_map,
+        line_registry=line_registry,
+    )
+    draw_bone_candidate_lists(
+        image=image,
+        color=color,
+        candidate_lists=candidate_lists,
+        line_registry=line_registry,
+    )
 
 
 def draw_bone_mask_mismatch_rescue_skeleton(
@@ -2056,7 +2122,7 @@ def bone_mask_mismatch_rescue_edge_score(
     )
 
 
-def bone_supported_edge_score(
+def bone_supported_edge_score_after_inside_check(
     bone_box: Box,
     first_box: Box,
     second_box: Box,
@@ -2066,8 +2132,6 @@ def bone_supported_edge_score(
     line_registry: Optional[SkeletonLineRegistry] = None,
 ) -> Optional[float]:
     if line_registry is not None and not line_registry.can_add(first_box, second_box):
-        return None
-    if not keypoint_inside_box(first_box, bone_box) or not keypoint_inside_box(second_box, bone_box):
         return None
     if not keypoints_share_instance_or_person(
         first_box,
@@ -2105,6 +2169,28 @@ def bone_supported_edge_score(
         return None
 
     return float(bone_box.score) * 1000.0 + long_axis_separation - center_offset
+
+
+def bone_supported_edge_score(
+    bone_box: Box,
+    first_box: Box,
+    second_box: Box,
+    keypoint_mask_instance_map: Optional[Dict[int, int]] = None,
+    keypoint_instance_quality_map: Optional[Dict[int, KeypointInstanceQuality]] = None,
+    allow_mixed_instance_override: bool = False,
+    line_registry: Optional[SkeletonLineRegistry] = None,
+) -> Optional[float]:
+    if not keypoint_inside_box(first_box, bone_box) or not keypoint_inside_box(second_box, bone_box):
+        return None
+    return bone_supported_edge_score_after_inside_check(
+        bone_box,
+        first_box,
+        second_box,
+        keypoint_mask_instance_map=keypoint_mask_instance_map,
+        keypoint_instance_quality_map=keypoint_instance_quality_map,
+        allow_mixed_instance_override=allow_mixed_instance_override,
+        line_registry=line_registry,
+    )
 
 
 def keypoints_share_instance_or_person(
