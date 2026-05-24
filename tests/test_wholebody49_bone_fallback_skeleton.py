@@ -288,6 +288,138 @@ def test_draw_skeleton_limits_lines_per_keypoint_by_skeleton_degree(monkeypatch)
     assert elbow_line_count == 2
 
 
+def test_draw_skeleton_limits_one_unknown_knee_to_one_ankle_slot_and_keeps_hip_slot(monkeypatch):
+    image = np.zeros((120, 120, 3), dtype=np.uint8)
+    hip = _box(36, 50, 5, handedness=0)
+    knee = _box(39, 50, 50, handedness=-1)
+    left_ankle = _box(42, 40, 95, handedness=0)
+    right_ankle = _box(42, 60, 95, handedness=1)
+    lines = _record_lines(monkeypatch)
+
+    demo.draw_skeleton(
+        image=image,
+        boxes=[
+            _body(),
+            _bone(45, 0, 55, 55),
+            _bone(35, 45, 55, 100),
+            _bone(45, 45, 65, 100),
+            hip,
+            knee,
+            left_ankle,
+            right_ankle,
+        ],
+        max_dist_threshold=300,
+    )
+
+    knee_point = (50, 50)
+    ankle_points = {(40, 95), (60, 95)}
+    knee_ankle_lines = [
+        line
+        for line in lines
+        if knee_point in line and any(ankle_point in line for ankle_point in ankle_points)
+    ]
+    assert len(knee_ankle_lines) == 1
+    assert ((50, 5), (50, 50)) in lines
+
+
+def test_bone_fallback_limits_one_knee_to_one_hip_slot(monkeypatch):
+    image = np.zeros((120, 120, 3), dtype=np.uint8)
+    left_hip = _box(36, 40, 5, handedness=0)
+    right_hip = _box(36, 60, 5, handedness=1)
+    knee = _box(39, 50, 50, handedness=-1)
+    bone_a = _bone(35, 0, 55, 55)
+    bone_b = _bone(45, 0, 65, 55)
+    for box in (left_hip, right_hip, knee):
+        box.person_id = 0
+    lines = _record_lines(monkeypatch)
+
+    demo.draw_bone_fallback_skeleton(
+        image=image,
+        color=(0, 255, 255),
+        bone_boxes=[bone_a, bone_b],
+        classid_to_boxes={
+            demo.BONE_CLASS_ID: [bone_a, bone_b],
+            36: [left_hip, right_hip],
+            39: [knee],
+        },
+        keypoint_mask_instance_map=None,
+        keypoint_instance_quality_map=None,
+        line_registry=demo.SkeletonLineRegistry(),
+    )
+
+    knee_point = (50, 50)
+    hip_points = {(40, 5), (60, 5)}
+    knee_hip_lines = [
+        line
+        for line in lines
+        if knee_point in line and any(hip_point in line for hip_point in hip_points)
+    ]
+    assert len(knee_hip_lines) == 1
+
+
+def test_bone_fallback_keeps_central_keypoint_to_left_and_right_slots(monkeypatch):
+    image = np.zeros((120, 120, 3), dtype=np.uint8)
+    abdomen = _box(35, 50, 50)
+    left_hip = _box(36, 35, 90, handedness=0)
+    right_hip = _box(36, 65, 90, handedness=1)
+    bone_a = _bone(30, 45, 55, 100)
+    bone_b = _bone(45, 45, 70, 100)
+    for box in (abdomen, left_hip, right_hip):
+        box.person_id = 0
+    lines = _record_lines(monkeypatch)
+
+    demo.draw_bone_fallback_skeleton(
+        image=image,
+        color=(0, 255, 255),
+        bone_boxes=[bone_a, bone_b],
+        classid_to_boxes={
+            demo.BONE_CLASS_ID: [bone_a, bone_b],
+            35: [abdomen],
+            36: [left_hip, right_hip],
+        },
+        keypoint_mask_instance_map=None,
+        keypoint_instance_quality_map=None,
+        line_registry=demo.SkeletonLineRegistry(),
+    )
+
+    assert len(lines) == 2
+    assert ((50, 50), (35, 90)) in lines
+    assert ((50, 50), (65, 90)) in lines
+
+
+def test_bone_fallback_tries_next_candidate_when_best_candidate_slot_is_taken(monkeypatch):
+    image = np.zeros((120, 120, 3), dtype=np.uint8)
+    hip = _box(36, 50, 5, handedness=0)
+    knee = _box(39, 50, 50, handedness=-1)
+    first_ankle = _box(42, 50, 95, handedness=0)
+    second_ankle = _box(42, 60, 95, handedness=1)
+    first_bone = _bone(45, 45, 55, 100)
+    second_bone = _bone(45, 0, 65, 100)
+    first_bone.score = 0.95
+    second_bone.score = 0.90
+    for box in (hip, knee, first_ankle, second_ankle):
+        box.person_id = 0
+    lines = _record_lines(monkeypatch)
+
+    demo.draw_bone_fallback_skeleton(
+        image=image,
+        color=(0, 255, 255),
+        bone_boxes=[first_bone, second_bone],
+        classid_to_boxes={
+            demo.BONE_CLASS_ID: [first_bone, second_bone],
+            36: [hip],
+            39: [knee],
+            42: [first_ankle, second_ankle],
+        },
+        keypoint_mask_instance_map=None,
+        keypoint_instance_quality_map=None,
+        line_registry=demo.SkeletonLineRegistry(),
+    )
+
+    assert ((50, 50), (50, 95)) in lines
+    assert ((50, 5), (50, 50)) in lines
+
+
 def test_draw_skeleton_draws_bone_fallback_before_mask_instance_edge(monkeypatch):
     image = np.zeros((120, 120, 3), dtype=np.uint8)
     shoulder = _box(22, 70, 20, handedness=1)

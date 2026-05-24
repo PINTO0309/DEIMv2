@@ -127,6 +127,7 @@ SKELETON_CONNECTION_DEGREE_LIMITS = Counter(
     for edge in _unique_undirected_edges(tuple(EDGES) + tuple(BONE_EDGE_PAIRS))
     for class_id in edge
 )
+SKELETON_NATURAL_CONNECTION_KEYS = _unique_undirected_edges(tuple(EDGES) + tuple(BONE_EDGE_PAIRS))
 
 
 def merge_dict(dct: Dict[str, Any], another_dct: Dict[str, Any], inplace: bool = True) -> Dict[str, Any]:
@@ -475,6 +476,7 @@ class SkeletonLineRegistry:
     def __init__(self) -> None:
         self.line_keys: set[Tuple[int, int]] = set()
         self.endpoint_counts: Counter[int] = Counter()
+        self.endpoint_neighbor_slot_counts: Counter[Tuple[int, int, int]] = Counter()
 
     @staticmethod
     def line_key(first_box: Box, second_box: Box) -> Tuple[int, int]:
@@ -484,8 +486,39 @@ class SkeletonLineRegistry:
     def endpoint_limit(box: Box) -> int:
         return max(1, int(SKELETON_CONNECTION_DEGREE_LIMITS.get(box.classid, 1)))
 
+    @staticmethod
+    def endpoint_neighbor_slot_key(endpoint_box: Box, neighbor_box: Box) -> Optional[Tuple[int, int, int]]:
+        edge_key = tuple(sorted((endpoint_box.classid, neighbor_box.classid)))
+        if edge_key not in SKELETON_NATURAL_CONNECTION_KEYS:
+            return None
+
+        neighbor_side_slot = -1
+        if endpoint_box.classid not in SIDE_AWARE_SKELETON_CLASS_IDS and neighbor_box.handedness >= 0:
+            neighbor_side_slot = neighbor_box.handedness
+        return (id(endpoint_box), neighbor_box.classid, neighbor_side_slot)
+
+    @classmethod
+    def endpoint_neighbor_slot_keys(cls, first_box: Box, second_box: Box) -> Tuple[Tuple[int, int, int], ...]:
+        slot_keys = []
+        first_slot_key = cls.endpoint_neighbor_slot_key(first_box, second_box)
+        if first_slot_key is not None:
+            slot_keys.append(first_slot_key)
+        second_slot_key = cls.endpoint_neighbor_slot_key(second_box, first_box)
+        if second_slot_key is not None:
+            slot_keys.append(second_slot_key)
+        return tuple(slot_keys)
+
     def has_line(self, first_box: Box, second_box: Box) -> bool:
         return self.line_key(first_box, second_box) in self.line_keys
+
+    def has_neighbor_slot_capacity(self, first_box: Box, second_box: Box) -> bool:
+        return all(
+            self.endpoint_neighbor_slot_counts[slot_key] < 1
+            for slot_key in self.endpoint_neighbor_slot_keys(first_box, second_box)
+        )
+
+    def connection_slot_priority(self, first_box: Box, second_box: Box) -> int:
+        return 1 if self.has_neighbor_slot_capacity(first_box, second_box) else 0
 
     def can_add(self, first_box: Box, second_box: Box) -> bool:
         if self.has_line(first_box, second_box):
@@ -493,6 +526,7 @@ class SkeletonLineRegistry:
         return (
             self.endpoint_counts[id(first_box)] < self.endpoint_limit(first_box)
             and self.endpoint_counts[id(second_box)] < self.endpoint_limit(second_box)
+            and self.has_neighbor_slot_capacity(first_box, second_box)
         )
 
     def add(self, first_box: Box, second_box: Box) -> bool:
@@ -501,6 +535,8 @@ class SkeletonLineRegistry:
         self.line_keys.add(self.line_key(first_box, second_box))
         self.endpoint_counts[id(first_box)] += 1
         self.endpoint_counts[id(second_box)] += 1
+        for slot_key in self.endpoint_neighbor_slot_keys(first_box, second_box):
+            self.endpoint_neighbor_slot_counts[slot_key] += 1
         return True
 
 
@@ -1821,10 +1857,9 @@ def draw_bone_supported_skeleton(
     if not bone_boxes:
         return bone_boxes, classid_to_boxes
 
-    selected_lines: Dict[Tuple[int, int], Tuple[int, float, Box, Box]] = {}
+    candidates: List[Tuple[int, int, float, int, Box, Box]] = []
 
-    for bone_box in bone_boxes:
-        best_candidate: Optional[Tuple[int, float, Box, Box]] = None
+    for bone_index, bone_box in enumerate(bone_boxes):
         for first_id, second_id in BONE_EDGE_PAIRS:
             first_list = classid_to_boxes.get(first_id, [])
             second_list = classid_to_boxes.get(second_id, [])
@@ -1849,20 +1884,19 @@ def draw_bone_supported_skeleton(
                         second_box,
                         keypoint_instance_quality_map,
                     )
-                    candidate = (clean_priority, score, first_box, second_box)
-                    if best_candidate is None or candidate[:2] > best_candidate[:2]:
-                        best_candidate = candidate
+                    slot_priority = line_registry.connection_slot_priority(first_box, second_box)
+                    candidates.append((slot_priority, clean_priority, score, bone_index, first_box, second_box))
 
-        if best_candidate is None:
+    used_bone_indices: set[int] = set()
+    for _, _, _, bone_index, first_box, second_box in sorted(
+        candidates,
+        key=lambda item: item[:3],
+        reverse=True,
+    ):
+        if bone_index in used_bone_indices:
             continue
-
-        clean_priority, score, first_box, second_box = best_candidate
-        pair_key = line_registry.line_key(first_box, second_box)
-        if pair_key not in selected_lines or (clean_priority, score) > selected_lines[pair_key][:2]:
-            selected_lines[pair_key] = (clean_priority, score, first_box, second_box)
-
-    for _, _, first_box, second_box in sorted(selected_lines.values(), key=lambda item: item[:2], reverse=True):
         if line_registry.add(first_box, second_box):
+            used_bone_indices.add(bone_index)
             cv2.line(image, (first_box.cx, first_box.cy), (second_box.cx, second_box.cy), color, thickness=2)
 
     return bone_boxes, classid_to_boxes
@@ -1894,10 +1928,9 @@ def draw_bone_fallback_skeleton(
     line_registry: SkeletonLineRegistry,
 ) -> None:
     fallback_edge_pairs = tuple(dict.fromkeys(EDGES))
-    selected_lines: Dict[Tuple[int, int], Tuple[int, float, Box, Box]] = {}
+    candidates: List[Tuple[int, int, float, int, Box, Box]] = []
 
-    for bone_box in bone_boxes:
-        best_candidate: Optional[Tuple[int, float, Box, Box]] = None
+    for bone_index, bone_box in enumerate(bone_boxes):
         for first_id, second_id in fallback_edge_pairs:
             first_list = classid_to_boxes.get(first_id, [])
             second_list = classid_to_boxes.get(second_id, [])
@@ -1922,20 +1955,19 @@ def draw_bone_fallback_skeleton(
                         second_box,
                         keypoint_instance_quality_map,
                     )
-                    candidate = (clean_priority, score, first_box, second_box)
-                    if best_candidate is None or candidate[:2] > best_candidate[:2]:
-                        best_candidate = candidate
+                    slot_priority = line_registry.connection_slot_priority(first_box, second_box)
+                    candidates.append((slot_priority, clean_priority, score, bone_index, first_box, second_box))
 
-        if best_candidate is None:
+    used_bone_indices: set[int] = set()
+    for _, _, _, bone_index, first_box, second_box in sorted(
+        candidates,
+        key=lambda item: item[:3],
+        reverse=True,
+    ):
+        if bone_index in used_bone_indices:
             continue
-
-        clean_priority, score, first_box, second_box = best_candidate
-        pair_key = line_registry.line_key(first_box, second_box)
-        if pair_key not in selected_lines or (clean_priority, score) > selected_lines[pair_key][:2]:
-            selected_lines[pair_key] = (clean_priority, score, first_box, second_box)
-
-    for _, _, first_box, second_box in sorted(selected_lines.values(), key=lambda item: item[:2], reverse=True):
         if line_registry.add(first_box, second_box):
+            used_bone_indices.add(bone_index)
             cv2.line(image, (first_box.cx, first_box.cy), (second_box.cx, second_box.cy), color, thickness=2)
 
 
