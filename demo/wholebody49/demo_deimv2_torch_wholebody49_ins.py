@@ -1838,6 +1838,8 @@ def draw_bone_supported_skeleton(
                         first_box,
                         second_box,
                         keypoint_mask_instance_map=keypoint_mask_instance_map,
+                        keypoint_instance_quality_map=keypoint_instance_quality_map,
+                        allow_mixed_instance_override=True,
                         line_registry=line_registry,
                     )
                     if score is None:
@@ -1909,6 +1911,8 @@ def draw_bone_fallback_skeleton(
                         first_box,
                         second_box,
                         keypoint_mask_instance_map=keypoint_mask_instance_map,
+                        keypoint_instance_quality_map=keypoint_instance_quality_map,
+                        allow_mixed_instance_override=True,
                         line_registry=line_registry,
                     )
                     if score is None:
@@ -2025,13 +2029,21 @@ def bone_supported_edge_score(
     first_box: Box,
     second_box: Box,
     keypoint_mask_instance_map: Optional[Dict[int, int]] = None,
+    keypoint_instance_quality_map: Optional[Dict[int, KeypointInstanceQuality]] = None,
+    allow_mixed_instance_override: bool = False,
     line_registry: Optional[SkeletonLineRegistry] = None,
 ) -> Optional[float]:
     if line_registry is not None and not line_registry.can_add(first_box, second_box):
         return None
     if not keypoint_inside_box(first_box, bone_box) or not keypoint_inside_box(second_box, bone_box):
         return None
-    if not keypoints_share_instance_or_person(first_box, second_box, keypoint_mask_instance_map):
+    if not keypoints_share_instance_or_person(
+        first_box,
+        second_box,
+        keypoint_mask_instance_map,
+        keypoint_instance_quality_map=keypoint_instance_quality_map,
+        allow_mixed_instance_override=allow_mixed_instance_override,
+    ):
         return None
 
     width = max(1, bone_box.x2 - bone_box.x1)
@@ -2067,14 +2079,17 @@ def keypoints_share_instance_or_person(
     first_box: Box,
     second_box: Box,
     keypoint_mask_instance_map: Optional[Dict[int, int]],
+    keypoint_instance_quality_map: Optional[Dict[int, KeypointInstanceQuality]] = None,
+    allow_mixed_instance_override: bool = False,
 ) -> bool:
     if keypoint_mask_instance_map is not None:
         first_mask_instance = keypoint_mask_instance_map.get(id(first_box))
         second_mask_instance = keypoint_mask_instance_map.get(id(second_box))
-        return (
-            first_mask_instance is None
-            or second_mask_instance is None
-            or first_mask_instance == second_mask_instance
+        if first_mask_instance is None or second_mask_instance is None or first_mask_instance == second_mask_instance:
+            return True
+        return bool(
+            allow_mixed_instance_override
+            and instance_edge_uses_mixed_keypoint(first_box, second_box, keypoint_instance_quality_map)
         )
     return first_box.person_id == second_box.person_id and first_box.person_id >= 0
 

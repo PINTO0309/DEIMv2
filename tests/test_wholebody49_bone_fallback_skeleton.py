@@ -376,6 +376,74 @@ def test_instance_skeleton_skips_mixed_keypoint_mask_edge_without_bone_support(m
     assert lines == []
 
 
+def test_bone_fallback_allows_low_quality_mixed_keypoint_across_mask_instances(monkeypatch):
+    image = np.zeros((120, 120, 3), dtype=np.uint8)
+    shoulder = _box(22, 80, 20, handedness=1)
+    mixed_elbow = _box(26, 45, 75, handedness=1)
+    bone = _bone(35, 10, 90, 85)
+    lines = _record_lines(monkeypatch)
+
+    demo.draw_bone_fallback_skeleton(
+        image=image,
+        color=(0, 255, 255),
+        bone_boxes=[bone],
+        classid_to_boxes={
+            demo.BONE_CLASS_ID: [bone],
+            22: [shoulder],
+            26: [mixed_elbow],
+        },
+        keypoint_mask_instance_map={
+            id(shoulder): 7,
+            id(mixed_elbow): 4,
+        },
+        keypoint_instance_quality_map={
+            id(mixed_elbow): demo.KeypointInstanceQuality(
+                is_mixed=True,
+                assigned_pixel_share=0.66,
+                assigned_pixel_count=66,
+                foreign_pixel_count=34,
+            ),
+        },
+        line_registry=demo.SkeletonLineRegistry(),
+    )
+
+    assert lines == [((80, 20), (45, 75))]
+
+
+def test_bone_fallback_rejects_clean_keypoints_across_mask_instances(monkeypatch):
+    image = np.zeros((120, 120, 3), dtype=np.uint8)
+    shoulder = _box(22, 80, 20, handedness=1)
+    clean_elbow = _box(26, 45, 75, handedness=1)
+    bone = _bone(35, 10, 90, 85)
+    lines = _record_lines(monkeypatch)
+
+    demo.draw_bone_fallback_skeleton(
+        image=image,
+        color=(0, 255, 255),
+        bone_boxes=[bone],
+        classid_to_boxes={
+            demo.BONE_CLASS_ID: [bone],
+            22: [shoulder],
+            26: [clean_elbow],
+        },
+        keypoint_mask_instance_map={
+            id(shoulder): 7,
+            id(clean_elbow): 4,
+        },
+        keypoint_instance_quality_map={
+            id(clean_elbow): demo.KeypointInstanceQuality(
+                is_mixed=False,
+                assigned_pixel_share=1.0,
+                assigned_pixel_count=10,
+                foreign_pixel_count=0,
+            ),
+        },
+        line_registry=demo.SkeletonLineRegistry(),
+    )
+
+    assert lines == []
+
+
 def test_bone_rescue_draws_mask_mismatched_same_person_edge(monkeypatch):
     image = np.zeros((120, 120, 3), dtype=np.uint8)
     knee = _box(39, 30, 30, handedness=0)
