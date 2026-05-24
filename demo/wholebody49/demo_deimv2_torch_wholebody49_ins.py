@@ -108,11 +108,24 @@ LEFT_SIDE_COLOR = (0, 128, 0)
 RIGHT_SIDE_COLOR = (255, 0, 255)
 BONE_BBOX_COLOR = (255, 255, 0)
 MASK_CLEANUP_PADDING = 1
+MIXED_KEYPOINT_FOREIGN_SHARE_THRESHOLD = 0.10
+MIXED_KEYPOINT_FOREIGN_PIXEL_THRESHOLD = 2
 INCLUDE_KEY = '__include__'
 _CENTER_GRID_CACHE: dict[tuple[int, int, int, int, tuple[str, int], torch.dtype], torch.Tensor] = {}
 _CENTER_INDEX_CACHE: dict[tuple[int, int, int, int, tuple[str, int]], tuple[torch.Tensor, torch.Tensor]] = {}
 _ENGINE_CREATE: Optional[Callable[..., Any]] = None
 _ENGINE_GLOBAL_CONFIG: Optional[Dict[str, Any]] = None
+
+
+def _unique_undirected_edges(edges: Sequence[Tuple[int, int]]) -> set[Tuple[int, int]]:
+    return {tuple(sorted(edge)) for edge in edges if edge[0] != edge[1]}
+
+
+SKELETON_CONNECTION_DEGREE_LIMITS = Counter(
+    class_id
+    for edge in _unique_undirected_edges(tuple(EDGES) + tuple(BONE_EDGE_PAIRS))
+    for class_id in edge
+)
 
 
 def merge_dict(dct: Dict[str, Any], another_dct: Dict[str, Any], inplace: bool = True) -> Dict[str, Any]:
@@ -447,6 +460,47 @@ class Box:
     is_used: bool = False
     person_id: int = -1
     track_id: int = -1
+
+
+@dataclass(frozen=True)
+class KeypointInstanceQuality:
+    is_mixed: bool
+    assigned_pixel_share: float
+    assigned_pixel_count: int
+    foreign_pixel_count: int
+
+
+class SkeletonLineRegistry:
+    def __init__(self) -> None:
+        self.line_keys: set[Tuple[int, int]] = set()
+        self.endpoint_counts: Counter[int] = Counter()
+
+    @staticmethod
+    def line_key(first_box: Box, second_box: Box) -> Tuple[int, int]:
+        return tuple(sorted((id(first_box), id(second_box))))
+
+    @staticmethod
+    def endpoint_limit(box: Box) -> int:
+        return max(1, int(SKELETON_CONNECTION_DEGREE_LIMITS.get(box.classid, 1)))
+
+    def has_line(self, first_box: Box, second_box: Box) -> bool:
+        return self.line_key(first_box, second_box) in self.line_keys
+
+    def can_add(self, first_box: Box, second_box: Box) -> bool:
+        if self.has_line(first_box, second_box):
+            return False
+        return (
+            self.endpoint_counts[id(first_box)] < self.endpoint_limit(first_box)
+            and self.endpoint_counts[id(second_box)] < self.endpoint_limit(second_box)
+        )
+
+    def add(self, first_box: Box, second_box: Box) -> bool:
+        if not self.can_add(first_box, second_box):
+            return False
+        self.line_keys.add(self.line_key(first_box, second_box))
+        self.endpoint_counts[id(first_box)] += 1
+        self.endpoint_counts[id(second_box)] += 1
+        return True
 
 
 class SimpleSortTracker:
@@ -1245,15 +1299,15 @@ def clip_binary_mask_to_box(
     return clipped_mask
 
 
-def build_keypoint_mask_instance_map(
+def build_body_mask_entries(
     boxes: List[Box],
     result: Dict[str, torch.Tensor],
     args,
     mask_threshold: float,
-) -> Dict[int, int]:
+) -> List[Tuple[Box, np.ndarray, np.ndarray]]:
     masks = result.get('masks')
     if masks is None:
-        return {}
+        return []
 
     if torch.is_tensor(masks):
         masks = masks.detach().cpu()
@@ -1274,28 +1328,99 @@ def build_keypoint_mask_instance_map(
         binary_mask = clip_binary_mask_to_box(mask_probs >= mask_threshold, body_box)
         if binary_mask.any():
             body_masks.append((body_box, mask_probs, binary_mask))
+    return body_masks
+
+
+def clipped_box_slice(box: Box, image_shape: Sequence[int]) -> Optional[Tuple[slice, slice]]:
+    image_height, image_width = int(image_shape[0]), int(image_shape[1])
+    if image_height <= 0 or image_width <= 0:
+        return None
+
+    x1 = max(0, min(box.x1, image_width - 1))
+    y1 = max(0, min(box.y1, image_height - 1))
+    x2 = max(0, min(box.x2, image_width - 1))
+    y2 = max(0, min(box.y2, image_height - 1))
+    if x2 < x1 or y2 < y1:
+        return None
+    return slice(y1, y2 + 1), slice(x1, x2 + 1)
+
+
+def build_keypoint_mask_assignment_context(
+    boxes: List[Box],
+    result: Dict[str, torch.Tensor],
+    args,
+    mask_threshold: float,
+) -> Tuple[Dict[int, int], Dict[int, KeypointInstanceQuality]]:
+    body_masks = build_body_mask_entries(
+        boxes=boxes,
+        result=result,
+        args=args,
+        mask_threshold=mask_threshold,
+    )
+    if not body_masks:
+        return {}, {}
 
     keypoint_mask_instance_map: Dict[int, int] = {}
+    keypoint_instance_quality_map: Dict[int, KeypointInstanceQuality] = {}
     for keypoint_box in boxes:
         if keypoint_box.classid not in SKELETON_ASSIGNMENT_KEYPOINT_IDS:
             continue
 
         best_match: Tuple[float, float, int, int] | None = None
+        instance_pixel_counts: Dict[int, int] = {}
         for body_box, mask_probs, binary_mask in body_masks:
             y, x = keypoint_box.cy, keypoint_box.cx
             if y < 0 or x < 0 or y >= binary_mask.shape[0] or x >= binary_mask.shape[1]:
                 continue
+
+            source_idx = int(body_box.source_idx)
+            keypoint_slice = clipped_box_slice(keypoint_box, binary_mask.shape)
+            if keypoint_slice is not None:
+                pixel_count = int(binary_mask[keypoint_slice].sum())
+                if pixel_count > 0:
+                    instance_pixel_counts[source_idx] = pixel_count
+
             if not bool(binary_mask[y, x]):
                 continue
 
-            source_idx = int(body_box.source_idx)
             candidate = (float(mask_probs[y, x]), float(body_box.score), -source_idx, source_idx)
             if best_match is None or candidate > best_match:
                 best_match = candidate
 
         if best_match is not None:
-            keypoint_mask_instance_map[id(keypoint_box)] = best_match[3]
+            assigned_instance = best_match[3]
+            keypoint_mask_instance_map[id(keypoint_box)] = assigned_instance
+            total_pixels = sum(instance_pixel_counts.values())
+            assigned_pixels = instance_pixel_counts.get(assigned_instance, 0)
+            foreign_pixels = max(0, total_pixels - assigned_pixels)
+            assigned_pixel_share = float(assigned_pixels) / float(total_pixels) if total_pixels > 0 else 1.0
+            foreign_pixel_share = float(foreign_pixels) / float(total_pixels) if total_pixels > 0 else 0.0
+            is_mixed = (
+                foreign_pixels >= MIXED_KEYPOINT_FOREIGN_PIXEL_THRESHOLD
+                and foreign_pixel_share >= MIXED_KEYPOINT_FOREIGN_SHARE_THRESHOLD
+            )
+            keypoint_instance_quality_map[id(keypoint_box)] = KeypointInstanceQuality(
+                is_mixed=is_mixed,
+                assigned_pixel_share=assigned_pixel_share,
+                assigned_pixel_count=assigned_pixels,
+                foreign_pixel_count=foreign_pixels,
+            )
 
+    return keypoint_mask_instance_map, keypoint_instance_quality_map
+
+
+def build_keypoint_mask_instance_map(
+    boxes: List[Box],
+    result: Dict[str, torch.Tensor],
+    args,
+    mask_threshold: float,
+) -> Dict[int, int]:
+    keypoint_mask_instance_map, _ = build_keypoint_mask_assignment_context(
+        boxes=boxes,
+        result=result,
+        args=args,
+        mask_threshold=mask_threshold,
+    )
     return keypoint_mask_instance_map
 
 
@@ -1459,6 +1584,7 @@ def box_area(box: Box) -> int:
 def suppress_duplicate_skeleton_keypoints(
     boxes: List[Box],
     keypoint_mask_instance_map: Optional[Dict[int, int]] = None,
+    keypoint_instance_quality_map: Optional[Dict[int, KeypointInstanceQuality]] = None,
 ) -> List[Box]:
     body_by_source_idx = {
         int(box.source_idx): box
@@ -1470,7 +1596,7 @@ def suppress_duplicate_skeleton_keypoints(
         for box in boxes
         if box.classid == BODY_CLASS_ID and box.person_id >= 0
     }
-    selected_keypoints: Dict[Tuple[str, int, int, int], Tuple[Box, float, float]] = {}
+    selected_keypoints: Dict[Tuple[str, int, int, int], Tuple[Box, Tuple[int, float, float, float]]] = {}
     passthrough_keypoint_ids: set[int] = set()
 
     for box in boxes:
@@ -1497,9 +1623,13 @@ def suppress_duplicate_skeleton_keypoints(
             continue
 
         area_ratio = box_area(box) / float(body_area)
-        candidate = (box, area_ratio, float(box.score))
+        quality = keypoint_instance_quality_map.get(id(box)) if keypoint_instance_quality_map is not None else None
+        clean_priority = 1 if quality is None or not quality.is_mixed else 0
+        assigned_pixel_share = quality.assigned_pixel_share if quality is not None else 1.0
+        priority = (clean_priority, assigned_pixel_share, area_ratio, float(box.score))
+        candidate = (box, priority)
         current = selected_keypoints.get(instance_key)
-        if current is None or (area_ratio, float(box.score)) > (current[1], current[2]):
+        if current is None or priority > current[1]:
             selected_keypoints[instance_key] = candidate
 
     selected_keypoint_ids = {id(candidate[0]) for candidate in selected_keypoints.values()}
@@ -1519,6 +1649,7 @@ def draw_skeleton(
     color: Tuple[int, int, int] = (0, 255, 255),
     max_dist_threshold: Optional[float] = 500.0,
     keypoint_mask_instance_map: Optional[Dict[int, int]] = None,
+    keypoint_instance_quality_map: Optional[Dict[int, KeypointInstanceQuality]] = None,
 ) -> None:
     person_boxes = [box for box in boxes if box.classid == 0]
     for person_id, person_box in enumerate(person_boxes):
@@ -1535,28 +1666,44 @@ def draw_skeleton(
     skeleton_boxes = suppress_duplicate_skeleton_keypoints(
         boxes=boxes,
         keypoint_mask_instance_map=keypoint_mask_instance_map,
+        keypoint_instance_quality_map=keypoint_instance_quality_map,
     )
-    person_skeleton_boxes = suppress_duplicate_skeleton_keypoints(boxes=boxes)
-    assigned_line_keys = draw_instance_skeleton(
+    person_skeleton_boxes = suppress_duplicate_skeleton_keypoints(
+        boxes=boxes,
+        keypoint_instance_quality_map=keypoint_instance_quality_map,
+    )
+    line_registry = SkeletonLineRegistry()
+    bone_boxes, classid_to_boxes = draw_bone_supported_skeleton(
+        image=image,
+        boxes=skeleton_boxes,
+        color=color,
+        keypoint_mask_instance_map=keypoint_mask_instance_map,
+        keypoint_instance_quality_map=keypoint_instance_quality_map,
+        line_registry=line_registry,
+    )
+    draw_bone_fallback_skeleton(
+        image=image,
+        color=color,
+        bone_boxes=bone_boxes,
+        classid_to_boxes=classid_to_boxes,
+        keypoint_mask_instance_map=keypoint_mask_instance_map,
+        keypoint_instance_quality_map=keypoint_instance_quality_map,
+        line_registry=line_registry,
+    )
+    draw_instance_skeleton(
         image=image,
         boxes=skeleton_boxes,
         color=color,
         max_dist_threshold=max_dist_threshold,
         keypoint_mask_instance_map=keypoint_mask_instance_map,
-    )
-    draw_bone_supported_skeleton(
-        image=image,
-        boxes=skeleton_boxes,
-        color=color,
-        keypoint_mask_instance_map=keypoint_mask_instance_map,
-        assigned_line_keys=assigned_line_keys,
+        line_registry=line_registry,
     )
     draw_bone_mask_mismatch_rescue_skeleton(
         image=image,
         boxes=person_skeleton_boxes,
         color=color,
         keypoint_mask_instance_map=keypoint_mask_instance_map,
-        assigned_line_keys=assigned_line_keys,
+        line_registry=line_registry,
     )
 
 
@@ -1566,7 +1713,11 @@ def draw_instance_skeleton(
     color: Tuple[int, int, int],
     max_dist_threshold: Optional[float],
     keypoint_mask_instance_map: Optional[Dict[int, int]] = None,
-) -> set[Tuple[int, int]]:
+    line_registry: Optional[SkeletonLineRegistry] = None,
+) -> SkeletonLineRegistry:
+    if line_registry is None:
+        line_registry = SkeletonLineRegistry()
+
     classid_to_boxes: Dict[int, List[Box]] = {}
     for box in boxes:
         classid_to_boxes.setdefault(box.classid, []).append(box)
@@ -1618,11 +1769,10 @@ def draw_instance_skeleton(
                 parent_capacity[parent_idx] -= 1
                 child_used[child_idx] = True
 
-    assigned_line_keys: set[Tuple[int, int]] = set()
     for parent_box, child_box in lines_to_draw:
-        cv2.line(image, (parent_box.cx, parent_box.cy), (child_box.cx, child_box.cy), color, thickness=2)
-        assigned_line_keys.add(tuple(sorted((id(parent_box), id(child_box)))))
-    return assigned_line_keys
+        if line_registry.add(parent_box, child_box):
+            cv2.line(image, (parent_box.cx, parent_box.cy), (child_box.cx, child_box.cy), color, thickness=2)
+    return line_registry
 
 
 def draw_bone_supported_skeleton(
@@ -1630,20 +1780,22 @@ def draw_bone_supported_skeleton(
     boxes: List[Box],
     color: Tuple[int, int, int],
     keypoint_mask_instance_map: Optional[Dict[int, int]],
-    assigned_line_keys: set[Tuple[int, int]],
-) -> None:
+    keypoint_instance_quality_map: Optional[Dict[int, KeypointInstanceQuality]],
+    line_registry: SkeletonLineRegistry,
+) -> Tuple[List[Box], Dict[int, List[Box]]]:
     bone_boxes = [box for box in boxes if box.classid == BONE_CLASS_ID]
-    if not bone_boxes:
-        return
 
     classid_to_boxes: Dict[int, List[Box]] = {}
     for box in boxes:
         classid_to_boxes.setdefault(box.classid, []).append(box)
 
-    selected_lines: Dict[Tuple[int, int], Tuple[float, Tuple[int, int], Tuple[int, int]]] = {}
+    if not bone_boxes:
+        return bone_boxes, classid_to_boxes
+
+    selected_lines: Dict[Tuple[int, int], Tuple[int, float, Box, Box]] = {}
 
     for bone_box in bone_boxes:
-        best_candidate: Optional[Tuple[float, Box, Box]] = None
+        best_candidate: Optional[Tuple[int, float, Box, Box]] = None
         for first_id, second_id in BONE_EDGE_PAIRS:
             first_list = classid_to_boxes.get(first_id, [])
             second_list = classid_to_boxes.get(second_id, [])
@@ -1657,36 +1809,48 @@ def draw_bone_supported_skeleton(
                         first_box,
                         second_box,
                         keypoint_mask_instance_map=keypoint_mask_instance_map,
-                        assigned_line_keys=assigned_line_keys,
+                        line_registry=line_registry,
                     )
                     if score is None:
                         continue
-                    candidate = (score, first_box, second_box)
-                    if best_candidate is None or candidate[0] > best_candidate[0]:
+                    clean_priority = bone_candidate_clean_priority(
+                        first_box,
+                        second_box,
+                        keypoint_instance_quality_map,
+                    )
+                    candidate = (clean_priority, score, first_box, second_box)
+                    if best_candidate is None or candidate[:2] > best_candidate[:2]:
                         best_candidate = candidate
 
         if best_candidate is None:
             continue
 
-        score, first_box, second_box = best_candidate
-        pair_key = tuple(sorted((id(first_box), id(second_box))))
-        point_a = (first_box.cx, first_box.cy)
-        point_b = (second_box.cx, second_box.cy)
-        if pair_key not in selected_lines or score > selected_lines[pair_key][0]:
-            selected_lines[pair_key] = (score, point_a, point_b)
+        clean_priority, score, first_box, second_box = best_candidate
+        pair_key = line_registry.line_key(first_box, second_box)
+        if pair_key not in selected_lines or (clean_priority, score) > selected_lines[pair_key][:2]:
+            selected_lines[pair_key] = (clean_priority, score, first_box, second_box)
 
-    for pair_key, (_, point_a, point_b) in selected_lines.items():
-        cv2.line(image, point_a, point_b, color, thickness=2)
-        assigned_line_keys.add(pair_key)
+    for _, _, first_box, second_box in sorted(selected_lines.values(), key=lambda item: item[:2], reverse=True):
+        if line_registry.add(first_box, second_box):
+            cv2.line(image, (first_box.cx, first_box.cy), (second_box.cx, second_box.cy), color, thickness=2)
 
-    draw_bone_fallback_skeleton(
-        image=image,
-        color=color,
-        bone_boxes=bone_boxes,
-        classid_to_boxes=classid_to_boxes,
-        keypoint_mask_instance_map=keypoint_mask_instance_map,
-        assigned_line_keys=assigned_line_keys,
-    )
+    return bone_boxes, classid_to_boxes
+
+
+def bone_candidate_clean_priority(
+    first_box: Box,
+    second_box: Box,
+    keypoint_instance_quality_map: Optional[Dict[int, KeypointInstanceQuality]],
+) -> int:
+    if keypoint_instance_quality_map is None:
+        return 1
+    first_quality = keypoint_instance_quality_map.get(id(first_box))
+    second_quality = keypoint_instance_quality_map.get(id(second_box))
+    if (first_quality is not None and first_quality.is_mixed) or (
+        second_quality is not None and second_quality.is_mixed
+    ):
+        return 0
+    return 1
 
 
 def draw_bone_fallback_skeleton(
@@ -1695,13 +1859,14 @@ def draw_bone_fallback_skeleton(
     bone_boxes: List[Box],
     classid_to_boxes: Dict[int, List[Box]],
     keypoint_mask_instance_map: Optional[Dict[int, int]],
-    assigned_line_keys: set[Tuple[int, int]],
+    keypoint_instance_quality_map: Optional[Dict[int, KeypointInstanceQuality]],
+    line_registry: SkeletonLineRegistry,
 ) -> None:
     fallback_edge_pairs = tuple(dict.fromkeys(EDGES))
-    selected_lines: Dict[Tuple[int, int], Tuple[float, Tuple[int, int], Tuple[int, int]]] = {}
+    selected_lines: Dict[Tuple[int, int], Tuple[int, float, Box, Box]] = {}
 
     for bone_box in bone_boxes:
-        best_candidate: Optional[Tuple[float, Box, Box]] = None
+        best_candidate: Optional[Tuple[int, float, Box, Box]] = None
         for first_id, second_id in fallback_edge_pairs:
             first_list = classid_to_boxes.get(first_id, [])
             second_list = classid_to_boxes.get(second_id, [])
@@ -1715,27 +1880,30 @@ def draw_bone_fallback_skeleton(
                         first_box,
                         second_box,
                         keypoint_mask_instance_map=keypoint_mask_instance_map,
-                        assigned_line_keys=assigned_line_keys,
+                        line_registry=line_registry,
                     )
                     if score is None:
                         continue
-                    candidate = (score, first_box, second_box)
-                    if best_candidate is None or candidate[0] > best_candidate[0]:
+                    clean_priority = bone_candidate_clean_priority(
+                        first_box,
+                        second_box,
+                        keypoint_instance_quality_map,
+                    )
+                    candidate = (clean_priority, score, first_box, second_box)
+                    if best_candidate is None or candidate[:2] > best_candidate[:2]:
                         best_candidate = candidate
 
         if best_candidate is None:
             continue
 
-        score, first_box, second_box = best_candidate
-        pair_key = tuple(sorted((id(first_box), id(second_box))))
-        point_a = (first_box.cx, first_box.cy)
-        point_b = (second_box.cx, second_box.cy)
-        if pair_key not in selected_lines or score > selected_lines[pair_key][0]:
-            selected_lines[pair_key] = (score, point_a, point_b)
+        clean_priority, score, first_box, second_box = best_candidate
+        pair_key = line_registry.line_key(first_box, second_box)
+        if pair_key not in selected_lines or (clean_priority, score) > selected_lines[pair_key][:2]:
+            selected_lines[pair_key] = (clean_priority, score, first_box, second_box)
 
-    for pair_key, (_, point_a, point_b) in selected_lines.items():
-        cv2.line(image, point_a, point_b, color, thickness=2)
-        assigned_line_keys.add(pair_key)
+    for _, _, first_box, second_box in sorted(selected_lines.values(), key=lambda item: item[:2], reverse=True):
+        if line_registry.add(first_box, second_box):
+            cv2.line(image, (first_box.cx, first_box.cy), (second_box.cx, second_box.cy), color, thickness=2)
 
 
 def draw_bone_mask_mismatch_rescue_skeleton(
@@ -1743,7 +1911,7 @@ def draw_bone_mask_mismatch_rescue_skeleton(
     boxes: List[Box],
     color: Tuple[int, int, int],
     keypoint_mask_instance_map: Optional[Dict[int, int]],
-    assigned_line_keys: set[Tuple[int, int]],
+    line_registry: SkeletonLineRegistry,
 ) -> None:
     if keypoint_mask_instance_map is None:
         return
@@ -1757,7 +1925,7 @@ def draw_bone_mask_mismatch_rescue_skeleton(
         classid_to_boxes.setdefault(box.classid, []).append(box)
 
     rescue_edge_pairs = tuple(dict.fromkeys(EDGES))
-    selected_lines: Dict[Tuple[int, int], Tuple[float, Tuple[int, int], Tuple[int, int]]] = {}
+    selected_lines: Dict[Tuple[int, int], Tuple[float, Box, Box]] = {}
 
     for bone_box in bone_boxes:
         best_candidate: Optional[Tuple[float, Box, Box]] = None
@@ -1774,7 +1942,7 @@ def draw_bone_mask_mismatch_rescue_skeleton(
                         first_box,
                         second_box,
                         keypoint_mask_instance_map=keypoint_mask_instance_map,
-                        assigned_line_keys=assigned_line_keys,
+                        line_registry=line_registry,
                     )
                     if score is None:
                         continue
@@ -1786,15 +1954,13 @@ def draw_bone_mask_mismatch_rescue_skeleton(
             continue
 
         score, first_box, second_box = best_candidate
-        pair_key = tuple(sorted((id(first_box), id(second_box))))
-        point_a = (first_box.cx, first_box.cy)
-        point_b = (second_box.cx, second_box.cy)
+        pair_key = line_registry.line_key(first_box, second_box)
         if pair_key not in selected_lines or score > selected_lines[pair_key][0]:
-            selected_lines[pair_key] = (score, point_a, point_b)
+            selected_lines[pair_key] = (score, first_box, second_box)
 
-    for pair_key, (_, point_a, point_b) in selected_lines.items():
-        cv2.line(image, point_a, point_b, color, thickness=2)
-        assigned_line_keys.add(pair_key)
+    for _, first_box, second_box in sorted(selected_lines.values(), key=lambda item: item[0], reverse=True):
+        if line_registry.add(first_box, second_box):
+            cv2.line(image, (first_box.cx, first_box.cy), (second_box.cx, second_box.cy), color, thickness=2)
 
 
 def bone_mask_mismatch_rescue_edge_score(
@@ -1802,10 +1968,9 @@ def bone_mask_mismatch_rescue_edge_score(
     first_box: Box,
     second_box: Box,
     keypoint_mask_instance_map: Dict[int, int],
-    assigned_line_keys: set[Tuple[int, int]],
+    line_registry: SkeletonLineRegistry,
 ) -> Optional[float]:
-    pair_key = tuple(sorted((id(first_box), id(second_box))))
-    if pair_key in assigned_line_keys:
+    if line_registry.has_line(first_box, second_box):
         return None
     if not is_handedness_compatible(first_box, second_box):
         return None
@@ -1822,7 +1987,7 @@ def bone_mask_mismatch_rescue_edge_score(
         first_box,
         second_box,
         keypoint_mask_instance_map=None,
-        assigned_line_keys=assigned_line_keys,
+        line_registry=line_registry,
     )
 
 
@@ -1831,10 +1996,9 @@ def bone_supported_edge_score(
     first_box: Box,
     second_box: Box,
     keypoint_mask_instance_map: Optional[Dict[int, int]] = None,
-    assigned_line_keys: Optional[set[Tuple[int, int]]] = None,
+    line_registry: Optional[SkeletonLineRegistry] = None,
 ) -> Optional[float]:
-    pair_key = tuple(sorted((id(first_box), id(second_box))))
-    if assigned_line_keys is not None and pair_key in assigned_line_keys:
+    if line_registry is not None and not line_registry.can_add(first_box, second_box):
         return None
     if not keypoint_inside_box(first_box, bone_box) or not keypoint_inside_box(second_box, bone_box):
         return None
@@ -2086,6 +2250,7 @@ def draw_detections(
     enable_trackid_overlay: bool = False,
     track_color_cache: Optional[Dict[int, np.ndarray]] = None,
     keypoint_mask_instance_map: Optional[Dict[int, int]] = None,
+    keypoint_instance_quality_map: Optional[Dict[int, KeypointInstanceQuality]] = None,
 ) -> np.ndarray:
     debug_image = image.copy()
     debug_image_h, debug_image_w = debug_image.shape[:2]
@@ -2244,6 +2409,7 @@ def draw_detections(
             color=(0, 255, 255),
             max_dist_threshold=None,
             keypoint_mask_instance_map=keypoint_mask_instance_map,
+            keypoint_instance_quality_map=keypoint_instance_quality_map,
         )
 
     return debug_image
@@ -2622,12 +2788,13 @@ def render_frame(
     track_color_cache: Optional[Dict[int, np.ndarray]] = None,
 ) -> np.ndarray:
     keypoint_mask_instance_map = None
+    keypoint_instance_quality_map = None
     if (
         args.enable_masks
         and runtime_settings['enable_bone_drawing_mode']
         and result.get('masks') is not None
     ):
-        keypoint_mask_instance_map = build_keypoint_mask_instance_map(
+        keypoint_mask_instance_map, keypoint_instance_quality_map = build_keypoint_mask_assignment_context(
             boxes=boxes,
             result=result,
             args=args,
@@ -2672,6 +2839,7 @@ def render_frame(
         enable_trackid_overlay=runtime_settings['enable_trackid_overlay'],
         track_color_cache=track_color_cache,
         keypoint_mask_instance_map=keypoint_mask_instance_map,
+        keypoint_instance_quality_map=keypoint_instance_quality_map,
     )
 
 

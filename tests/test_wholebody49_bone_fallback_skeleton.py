@@ -169,6 +169,78 @@ def test_draw_skeleton_suppresses_duplicate_mask_keypoints_by_body_area_ratio(mo
     assert lines == [((20, 40), (20, 80))]
 
 
+def test_draw_skeleton_prefers_clean_keypoint_over_larger_mixed_keypoint(monkeypatch):
+    image = np.zeros((120, 120, 3), dtype=np.uint8)
+    body = _body(source_idx=7)
+    clean_knee = _box(39, 40, 40, handedness=0, half_size=1)
+    mixed_knee = _box(39, 20, 40, handedness=0, half_size=5)
+    ankle = _box(42, 40, 80, handedness=0, half_size=1)
+    lines = _record_lines(monkeypatch)
+
+    demo.draw_skeleton(
+        image=image,
+        boxes=[body, clean_knee, mixed_knee, ankle],
+        max_dist_threshold=300,
+        keypoint_mask_instance_map={
+            id(clean_knee): 7,
+            id(mixed_knee): 7,
+            id(ankle): 7,
+        },
+        keypoint_instance_quality_map={
+            id(clean_knee): demo.KeypointInstanceQuality(
+                is_mixed=False,
+                assigned_pixel_share=1.0,
+                assigned_pixel_count=4,
+                foreign_pixel_count=0,
+            ),
+            id(mixed_knee): demo.KeypointInstanceQuality(
+                is_mixed=True,
+                assigned_pixel_share=0.85,
+                assigned_pixel_count=85,
+                foreign_pixel_count=15,
+            ),
+        },
+    )
+
+    assert lines == [((40, 40), (40, 80))]
+
+
+def test_draw_skeleton_keeps_area_ratio_order_for_same_mixed_priority(monkeypatch):
+    image = np.zeros((120, 120, 3), dtype=np.uint8)
+    body = _body(source_idx=7)
+    smaller_knee = _box(39, 40, 40, handedness=0, half_size=1)
+    larger_knee = _box(39, 20, 40, handedness=0, half_size=5)
+    ankle = _box(42, 20, 80, handedness=0, half_size=1)
+    lines = _record_lines(monkeypatch)
+
+    demo.draw_skeleton(
+        image=image,
+        boxes=[body, smaller_knee, larger_knee, ankle],
+        max_dist_threshold=300,
+        keypoint_mask_instance_map={
+            id(smaller_knee): 7,
+            id(larger_knee): 7,
+            id(ankle): 7,
+        },
+        keypoint_instance_quality_map={
+            id(smaller_knee): demo.KeypointInstanceQuality(
+                is_mixed=True,
+                assigned_pixel_share=0.85,
+                assigned_pixel_count=85,
+                foreign_pixel_count=15,
+            ),
+            id(larger_knee): demo.KeypointInstanceQuality(
+                is_mixed=True,
+                assigned_pixel_share=0.85,
+                assigned_pixel_count=85,
+                foreign_pixel_count=15,
+            ),
+        },
+    )
+
+    assert lines == [((20, 40), (20, 80))]
+
+
 def test_draw_skeleton_suppresses_duplicate_person_keypoints_by_body_area_ratio(monkeypatch):
     image = np.zeros((120, 120, 3), dtype=np.uint8)
     body = _body()
@@ -185,6 +257,96 @@ def test_draw_skeleton_suppresses_duplicate_person_keypoints_by_body_area_ratio(
     )
 
     assert lines == [((20, 40), (20, 80))]
+
+
+def test_draw_skeleton_limits_lines_per_keypoint_by_skeleton_degree(monkeypatch):
+    image = np.zeros((120, 120, 3), dtype=np.uint8)
+    shoulder_a = _box(24, 30, 20, handedness=0)
+    shoulder_b = _box(24, 70, 20, handedness=1)
+    elbow = _box(28, 50, 50, handedness=0)
+    wrist = _box(31, 50, 90, handedness=0)
+    lines = _record_lines(monkeypatch)
+
+    demo.draw_skeleton(
+        image=image,
+        boxes=[
+            _body(),
+            _bone(25, 15, 55, 55),
+            _bone(45, 15, 75, 55),
+            _bone(45, 45, 55, 95),
+            shoulder_a,
+            shoulder_b,
+            elbow,
+            wrist,
+        ],
+        max_dist_threshold=300,
+    )
+
+    elbow_point = (50, 50)
+    elbow_line_count = sum(elbow_point in line for line in lines)
+    assert len(lines) == 2
+    assert elbow_line_count == 2
+
+
+def test_draw_skeleton_draws_bone_fallback_before_mask_instance_edge(monkeypatch):
+    image = np.zeros((120, 120, 3), dtype=np.uint8)
+    shoulder = _box(22, 70, 20, handedness=1)
+    clean_elbow = _box(26, 25, 70, handedness=1)
+    mixed_elbow = _box(26, 100, 70, handedness=1)
+    lines = _record_lines(monkeypatch)
+
+    demo.draw_skeleton(
+        image=image,
+        boxes=[_body(), _bone(15, 10, 80, 80), shoulder, clean_elbow, mixed_elbow],
+        max_dist_threshold=300,
+        keypoint_mask_instance_map={
+            id(shoulder): 7,
+            id(mixed_elbow): 7,
+        },
+    )
+
+    assert lines[0] == ((70, 20), (25, 70))
+
+
+def test_bone_fallback_prefers_clean_candidate_over_mixed_candidate(monkeypatch):
+    image = np.zeros((120, 120, 3), dtype=np.uint8)
+    shoulder = _box(22, 50, 20, handedness=1)
+    clean_elbow = _box(26, 20, 70, handedness=1)
+    mixed_elbow = _box(26, 95, 60, handedness=1)
+    bone = _bone(5, 5, 105, 85)
+    shoulder.person_id = 0
+    clean_elbow.person_id = 0
+    mixed_elbow.person_id = 0
+    lines = _record_lines(monkeypatch)
+
+    demo.draw_bone_fallback_skeleton(
+        image=image,
+        color=(0, 255, 255),
+        bone_boxes=[bone],
+        classid_to_boxes={
+            demo.BONE_CLASS_ID: [bone],
+            22: [shoulder],
+            26: [clean_elbow, mixed_elbow],
+        },
+        keypoint_mask_instance_map=None,
+        keypoint_instance_quality_map={
+            id(clean_elbow): demo.KeypointInstanceQuality(
+                is_mixed=False,
+                assigned_pixel_share=1.0,
+                assigned_pixel_count=4,
+                foreign_pixel_count=0,
+            ),
+            id(mixed_elbow): demo.KeypointInstanceQuality(
+                is_mixed=True,
+                assigned_pixel_share=0.62,
+                assigned_pixel_count=62,
+                foreign_pixel_count=38,
+            ),
+        },
+        line_registry=demo.SkeletonLineRegistry(),
+    )
+
+    assert lines == [((50, 20), (20, 70))]
 
 
 def test_bone_rescue_draws_mask_mismatched_same_person_edge(monkeypatch):
