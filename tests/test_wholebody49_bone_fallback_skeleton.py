@@ -349,6 +349,33 @@ def test_bone_fallback_prefers_clean_candidate_over_mixed_candidate(monkeypatch)
     assert lines == [((50, 20), (20, 70))]
 
 
+def test_instance_skeleton_skips_mixed_keypoint_mask_edge_without_bone_support(monkeypatch):
+    image = np.zeros((120, 120, 3), dtype=np.uint8)
+    shoulder = _box(22, 50, 20, handedness=1)
+    mixed_elbow = _box(26, 90, 60, handedness=1)
+    lines = _record_lines(monkeypatch)
+
+    demo.draw_skeleton(
+        image=image,
+        boxes=[_body(), shoulder, mixed_elbow],
+        max_dist_threshold=300,
+        keypoint_mask_instance_map={
+            id(shoulder): 7,
+            id(mixed_elbow): 7,
+        },
+        keypoint_instance_quality_map={
+            id(mixed_elbow): demo.KeypointInstanceQuality(
+                is_mixed=True,
+                assigned_pixel_share=0.62,
+                assigned_pixel_count=62,
+                foreign_pixel_count=38,
+            ),
+        },
+    )
+
+    assert lines == []
+
+
 def test_bone_rescue_draws_mask_mismatched_same_person_edge(monkeypatch):
     image = np.zeros((120, 120, 3), dtype=np.uint8)
     knee = _box(39, 30, 30, handedness=0)

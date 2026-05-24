@@ -110,6 +110,7 @@ BONE_BBOX_COLOR = (255, 255, 0)
 MASK_CLEANUP_PADDING = 1
 MIXED_KEYPOINT_FOREIGN_SHARE_THRESHOLD = 0.10
 MIXED_KEYPOINT_FOREIGN_PIXEL_THRESHOLD = 2
+INSTANCE_EDGE_MIXED_ASSIGNED_SHARE_MIN = 0.75
 INCLUDE_KEY = '__include__'
 _CENTER_GRID_CACHE: dict[tuple[int, int, int, int, tuple[str, int], torch.dtype], torch.Tensor] = {}
 _CENTER_INDEX_CACHE: dict[tuple[int, int, int, int, tuple[str, int]], tuple[torch.Tensor, torch.Tensor]] = {}
@@ -1696,6 +1697,7 @@ def draw_skeleton(
         color=color,
         max_dist_threshold=max_dist_threshold,
         keypoint_mask_instance_map=keypoint_mask_instance_map,
+        keypoint_instance_quality_map=keypoint_instance_quality_map,
         line_registry=line_registry,
     )
     draw_bone_mask_mismatch_rescue_skeleton(
@@ -1713,6 +1715,7 @@ def draw_instance_skeleton(
     color: Tuple[int, int, int],
     max_dist_threshold: Optional[float],
     keypoint_mask_instance_map: Optional[Dict[int, int]] = None,
+    keypoint_instance_quality_map: Optional[Dict[int, KeypointInstanceQuality]] = None,
     line_registry: Optional[SkeletonLineRegistry] = None,
 ) -> SkeletonLineRegistry:
     if line_registry is None:
@@ -1745,6 +1748,12 @@ def draw_instance_skeleton(
                     continue
                 if not is_handedness_compatible(parent_box, child_box):
                     continue
+                if keypoint_mask_instance_map is not None and instance_edge_uses_mixed_keypoint(
+                    parent_box,
+                    child_box,
+                    keypoint_instance_quality_map,
+                ):
+                    continue
 
                 if keypoint_mask_instance_map is not None:
                     parent_mask_instance = keypoint_mask_instance_map.get(id(parent_box))
@@ -1773,6 +1782,26 @@ def draw_instance_skeleton(
         if line_registry.add(parent_box, child_box):
             cv2.line(image, (parent_box.cx, parent_box.cy), (child_box.cx, child_box.cy), color, thickness=2)
     return line_registry
+
+
+def instance_edge_uses_mixed_keypoint(
+    parent_box: Box,
+    child_box: Box,
+    keypoint_instance_quality_map: Optional[Dict[int, KeypointInstanceQuality]],
+) -> bool:
+    if keypoint_instance_quality_map is None:
+        return False
+    parent_quality = keypoint_instance_quality_map.get(id(parent_box))
+    child_quality = keypoint_instance_quality_map.get(id(child_box))
+    return is_low_quality_mixed_keypoint(parent_quality) or is_low_quality_mixed_keypoint(child_quality)
+
+
+def is_low_quality_mixed_keypoint(quality: Optional[KeypointInstanceQuality]) -> bool:
+    return bool(
+        quality is not None
+        and quality.is_mixed
+        and quality.assigned_pixel_share < INSTANCE_EDGE_MIXED_ASSIGNED_SHARE_MIN
+    )
 
 
 def draw_bone_supported_skeleton(
