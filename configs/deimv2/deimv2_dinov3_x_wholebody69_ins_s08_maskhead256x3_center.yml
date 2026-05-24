@@ -1,5 +1,5 @@
 __include__: [
-  '../dataset/wholebody68_instance.yml',
+  '../dataset/wholebody69_instance.yml',
   '../runtime.yml',
   '../base/dataloader.yml',
   '../base/optimizer.yml',
@@ -9,7 +9,7 @@ __include__: [
 
 output_dir: ./outputs/deimv2_dinov3_x_wholebody68_ins_s08_maskhead256x3_center
 mask_target_class_ids: [0]
-center_eval_class_ids: [21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60, 61, 62, 63, 64, 65, 66, 67]
+center_eval_class_ids: [21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60, 61, 62, 63, 64, 65, 66, 67, 68]
 center_eval_thresholds: [0.25, 0.5, 1.0]
 center_eval_primary_threshold: 0.5
 center_eval_normalizer: half_diagonal
@@ -36,7 +36,7 @@ HybridEncoder:
 DEIMTransformer:
   num_layers: 6
   eval_idx: -1
-  num_queries: 680
+  num_queries: 2040
   feat_channels: [256, 256, 256]
   hidden_dim: 256
   dim_feedforward: 2048
@@ -49,7 +49,7 @@ DEIMTransformer:
   aux_mask_feature_level: 0 # 0=stride8, 1=stride16, 2=stride32
 
 PostProcessor:
-  num_top_queries: 680
+  num_top_queries: 2040
   k_max: 0
 
 epoches: 58
@@ -173,12 +173,15 @@ DEIMCriterion:
   use_contour_detection: True
   use_distance_transform: True
   distance_transform_steps: 5
-  center_target_class_ids: [21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60, 61, 62, 63, 64, 65, 66, 67]
+  center_target_class_ids: [21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60, 61, 62, 63, 64, 65, 66, 67, 68]
   center_distance_min_radius: 0.02
   center_bbox_wh_weight: 0.25
   center_giou_weight: 0.25
   center_local_weight: 0.0
-  class_negative_ignore_class_ids: [48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60, 61, 62, 63, 64, 65, 66, 67]
+  # Parent class for class-negative ignore.
+  # 0-based classid 32 is `hand` for queries whose centers fall inside an incomplete hand box,
+  # negative classification loss for hand keypoints 49-68 is ignored instead of penalizing possible unannotated keypoints.
+  class_negative_ignore_class_ids: [49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60, 61, 62, 63, 64, 65, 66, 67, 68]
   class_negative_ignore_parent_class_id: 32
   class_negative_ignore_parent_expand_ratio: 0.05
   class_negative_ignore_require_incomplete_parent: True
@@ -191,6 +194,6 @@ DEIMCriterion:
     change_matcher: True
     iou_order_alpha: 4.0
     matcher_change_epoch: 45
-    center_target_class_ids: [21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60, 61, 62, 63, 64, 65, 66, 67]
+    center_target_class_ids: [21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60, 61, 62, 63, 64, 65, 66, 67, 68]
     center_distance_min_radius: 0.02
     center_match_wh_cost_weight: 0.25

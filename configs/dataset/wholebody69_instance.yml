@@ -4,7 +4,7 @@ evaluator:
   type: CocoEvaluator
   iou_types: ['bbox', 'segm']
 
-num_classes: 69 # classes + 1
+num_classes: 70 # classes + 1
 remap_mscoco_category: False # custom dataset -> False
 mask_category_ids: [0] # body only
 segm_eval_category_ids: [0] # body only
