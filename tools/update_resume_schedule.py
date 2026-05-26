@@ -59,35 +59,43 @@ def _replace_once(text: str, pattern: str, repl: str, label: str) -> tuple[str, 
     return updated, count
 
 
-def _update_config(config_path: Path, end_epoch: int, dry_run: bool = False) -> None:
+def _update_config(config_path: Path, policy_end_epoch: int, collate_end_epoch: int, dry_run: bool = False) -> None:
     text = config_path.read_text()
 
     # Preserve indentation and inline comments while changing only the trailing epoch value.
     text, _ = _replace_once(
         text,
         r"^(\s*epoch:\s*\[\s*4\s*,\s*29\s*,\s*)\d+(\s*\].*)$",
-        rf"\g<1>{end_epoch}\g<2>",
+        rf"\g<1>{policy_end_epoch}\g<2>",
         "train_dataloader.dataset.transforms.policy.epoch",
     )
     text, _ = _replace_once(
         text,
         r"^(\s*stop_epoch:\s*)\d+(\s*(?:#.*)?)$",
-        rf"\g<1>{end_epoch}\g<2>",
+        rf"\g<1>{collate_end_epoch}\g<2>",
         "train_dataloader.collate_fn.stop_epoch",
     )
     text, _ = _replace_once(
         text,
         r"^(\s*copyblend_epochs:\s*\[\s*4\s*,\s*)\d+(\s*\].*)$",
-        rf"\g<1>{end_epoch}\g<2>",
+        rf"\g<1>{collate_end_epoch}\g<2>",
         "train_dataloader.collate_fn.copyblend_epochs",
     )
 
     if dry_run:
-        print(f"config: would update policy epoch / stop_epoch / copyblend_epochs -> {end_epoch} ({config_path})")
+        print(
+            "config: would update "
+            f"policy.epoch[2] -> {policy_end_epoch}, "
+            f"stop_epoch/copyblend_epochs[1] -> {collate_end_epoch} ({config_path})"
+        )
         return
 
     config_path.write_text(text)
-    print(f"config: updated policy epoch / stop_epoch / copyblend_epochs -> {end_epoch} ({config_path})")
+    print(
+        "config: updated "
+        f"policy.epoch[2] -> {policy_end_epoch}, "
+        f"stop_epoch/copyblend_epochs[1] -> {collate_end_epoch} ({config_path})"
+    )
 
 
 def _positive_int(value: str) -> int:
@@ -104,7 +112,23 @@ def parse_args() -> argparse.Namespace:
             "policy/stop_epoch/copyblend_epochs values in a config YAML."
         )
     )
-    parser.add_argument("end_epoch", type=_positive_int, help="new trailing epoch value, e.g. 54 or 58")
+    parser.add_argument(
+        "end_epoch",
+        type=_positive_int,
+        help="new trailing epoch value for both policy and collate settings, e.g. 54 or 58",
+    )
+    parser.add_argument(
+        "--policy-end-epoch",
+        type=_positive_int,
+        default=None,
+        help="override only policy.epoch[2] in the checkpoint and config",
+    )
+    parser.add_argument(
+        "--collate-end-epoch",
+        type=_positive_int,
+        default=None,
+        help="override only config stop_epoch and copyblend_epochs[1]",
+    )
     parser.add_argument("--checkpoint", type=Path, default=DEFAULT_CHECKPOINT, help=f"default: {DEFAULT_CHECKPOINT}")
     parser.add_argument(
         "--output-checkpoint",
@@ -148,16 +172,19 @@ def main() -> None:
     if args.config_only and args.checkpoint_only:
         raise SystemExit("--config-only and --checkpoint-only cannot be used together")
 
+    policy_end_epoch = args.policy_end_epoch if args.policy_end_epoch is not None else args.end_epoch
+    collate_end_epoch = args.collate_end_epoch if args.collate_end_epoch is not None else args.end_epoch
+
     if not args.checkpoint_only:
         if args.backup and not args.dry_run:
             _backup(args.config)
-        _update_config(args.config, args.end_epoch, dry_run=args.dry_run)
+        _update_config(args.config, policy_end_epoch, collate_end_epoch, dry_run=args.dry_run)
 
     if not args.config_only:
         output_checkpoint: Path = args.output_checkpoint or args.checkpoint
         if args.backup and not args.dry_run and output_checkpoint == args.checkpoint:
             _backup(args.checkpoint)
-        _update_checkpoint(args.checkpoint, output_checkpoint, args.end_epoch, dry_run=args.dry_run)
+        _update_checkpoint(args.checkpoint, output_checkpoint, policy_end_epoch, dry_run=args.dry_run)
 
 
 if __name__ == "__main__":
