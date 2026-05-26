@@ -23,10 +23,10 @@ from ..optim.lr_scheduler import FlatCosineLRScheduler
 
 class DetSolver(BaseSolver):
     def _get_primary_metric_key(self, test_stats: dict):
-        if 'coco_eval_masks' in test_stats:
-            return 'coco_eval_masks'
         if 'coco_eval_bbox' in test_stats:
             return 'coco_eval_bbox'
+        if 'coco_eval_masks' in test_stats:
+            return 'coco_eval_masks'
         return next(iter(test_stats), None) if test_stats else None
 
     def fit(self, ):
