@@ -102,7 +102,7 @@ train_dataloader:
         epoch: [4, 250, 400]
         ops: ['Mosaic', 'RandomPhotometricDistort', 'RandomZoomOut', 'RandomIoUCrop']
       mosaic_prob: -0.1
-  total_batch_size: 2
+  total_batch_size: 3
   num_workers: 4
 
   collate_fn:
@@ -123,7 +123,7 @@ val_dataloader:
         - {type: Resize, size: [416, 416], }
         - {type: ConvertPILImage, dtype: 'float32', scale: True}
   shuffle: False
-  total_batch_size: 2
+  total_batch_size: 3
   num_workers: 4
 
 DEIMCriterion:
