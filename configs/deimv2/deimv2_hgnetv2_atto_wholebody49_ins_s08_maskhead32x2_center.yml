@@ -42,7 +42,7 @@ DEIMTransformer:
 
   num_layers: 3
   eval_idx: -1
-  num_queries: 620
+  num_queries: 500
   dim_feedforward: 160
   share_bbox_head: True
   use_gateway: False
@@ -55,7 +55,7 @@ DEIMTransformer:
   aux_mask_feature_level: 0 # 0=stride16, 1=stride32
 
 PostProcessor:
-  num_top_queries: 620
+  num_top_queries: 500
   k_max: 0
 
 epoches: 500
