@@ -409,8 +409,8 @@ def resize_masks(
     )
     work_masks = masks.float() if needs_float else masks
 
-    if origin == 'topleft':
-        align_corners = False if mode == 'bilinear' else None
+    if origin == 'topleft' or (origin == 'center' and mode == 'area'):
+        align_corners = False if mode in ('bilinear', 'bicubic') else None
         resized = F.interpolate(
             work_masks,
             size=(out_height, out_width),
@@ -430,7 +430,7 @@ def resize_masks(
         resized = F.grid_sample(
             work_masks,
             grid,
-            mode='bilinear',
+            mode=mode,
             padding_mode='zeros',
             align_corners=True,
         )
@@ -2651,6 +2651,7 @@ class OnnxInferenceModel:
         device_arg: str | None,
         inference_type: str,
         mask_resize_origin: str = 'topleft',
+        mask_resize_mode: str = 'bilinear',
     ):
         try:
             import onnxruntime as ort
@@ -2667,6 +2668,7 @@ class OnnxInferenceModel:
         self.input_names = {inp.name for inp in self.session.get_inputs()}
         self.output_names = [out.name for out in self.session.get_outputs()]
         self.mask_resize_origin = mask_resize_origin
+        self.mask_resize_mode = mask_resize_mode
         self.providers = self.session.get_providers()
         self.last_inference_time = 0.0
         image_input = self.session.get_inputs()[0]
@@ -2707,9 +2709,11 @@ class OnnxInferenceModel:
             batch_masks = resize_masks(
                 batch_masks.unsqueeze(1),
                 size=tuple(int(v) for v in orig_target_sizes[batch_idx, [1, 0]].tolist()),
-                mode='bilinear',
+                mode=self.mask_resize_mode,
                 origin=self.mask_resize_origin,
             )
+            if self.mask_resize_mode == 'bicubic':
+                batch_masks = batch_masks.clamp(0.0, 1.0)
             resized_batches.append(batch_masks)
         return resized_batches
 
@@ -2727,9 +2731,11 @@ class OnnxInferenceModel:
         resized_masks = resize_masks(
             batch_masks.unsqueeze(1),
             size=tuple(int(v) for v in orig_target_size[[1, 0]].tolist()),
-            mode='bilinear',
+            mode=self.mask_resize_mode,
             origin=self.mask_resize_origin,
         )
+        if self.mask_resize_mode == 'bicubic':
+            resized_masks = resized_masks.clamp(0.0, 1.0)
         return {
             source_idx: resized_masks[pos]
             for pos, source_idx in enumerate(unique_indices)
@@ -2810,6 +2816,7 @@ def initialize_model(args, config_path: Path, resume_path: Path):
             args.device,
             args.inference_type,
             mask_resize_origin=args.mask_resize_origin,
+            mask_resize_mode=args.mask_resize_mode,
         )
         transform = build_onnx_transform_with_normalize(
             model.image_size,
@@ -3319,6 +3326,12 @@ def parse_args():
     parser.add_argument('--mask_bilateral_sigma_color', type=float, default=1.0)
     parser.add_argument('--mask_bilateral_sigma_space', type=float, default=3.0)
     parser.add_argument('--mask_resize_origin', type=str, choices=['topleft', 'center'], default='topleft')
+    parser.add_argument(
+        '--mask_resize_mode',
+        type=str,
+        choices=['nearest', 'nearest-exact', 'bilinear', 'bicubic', 'area'],
+        default='bilinear',
+    )
     parser.add_argument('--enable-masks', action='store_true')
     parser.add_argument('--enable-contours', action='store_true')
     parser.add_argument('--keypoint_drawing_mode', type=str, choices=['dot', 'box', 'both'], default='dot')
