@@ -2613,6 +2613,7 @@ class InferenceModel(nn.Module):
         self.postprocessor = cfg.postprocessor.eval()
         self.postprocessor.mask_resize_origin = mask_resize_origin
         self.device = device
+        self.last_inference_time = 0.0
 
     @torch.inference_mode()
     def forward(
@@ -2622,11 +2623,17 @@ class InferenceModel(nn.Module):
         return_masks: bool=False,
         return_contours: bool=False,
     ):
+        if self.device.type == 'cuda':
+            torch.cuda.synchronize(self.device)
+        inference_start_time = time.perf_counter()
         outputs = self.model(
             image_tensor,
             return_masks=return_masks,
             return_contours=return_contours,
         )
+        if self.device.type == 'cuda':
+            torch.cuda.synchronize(self.device)
+        self.last_inference_time = time.perf_counter() - inference_start_time
         outputs = move_to_device(outputs, torch.device('cpu'))
         orig_target_sizes = orig_target_sizes.to('cpu')
         return self.postprocessor(
@@ -2661,6 +2668,7 @@ class OnnxInferenceModel:
         self.output_names = [out.name for out in self.session.get_outputs()]
         self.mask_resize_origin = mask_resize_origin
         self.providers = self.session.get_providers()
+        self.last_inference_time = 0.0
         image_input = self.session.get_inputs()[0]
         image_shape = image_input.shape
         self.image_size = tuple(int(v) for v in image_shape[2:4]) if len(image_shape) >= 4 and all(isinstance(v, int) for v in image_shape[2:4]) else None
@@ -2744,7 +2752,9 @@ class OnnxInferenceModel:
             requested_outputs.append('masks')
         if return_contours:
             requested_outputs.append('contours')
+        inference_start_time = time.perf_counter()
         output_values = self.session.run(requested_outputs, input_feed)
+        self.last_inference_time = time.perf_counter() - inference_start_time
         outputs = dict(zip(requested_outputs, output_values))
 
         if 'label_xyxy_score' not in outputs:
@@ -2862,19 +2872,22 @@ def run_model_inference(
     device: Optional[torch.device],
     args,
     runtime_settings: Dict[str, object],
-) -> Tuple[Dict[str, torch.Tensor], List[Box]]:
+) -> Tuple[Dict[str, torch.Tensor], List[Box], float]:
     orig_h, orig_w = image.shape[:2]
     orig_target_sizes = torch.tensor([[orig_w, orig_h]], dtype=torch.float32)
     image_tensor = transform(image).unsqueeze(0)
     if not use_onnx and device is not None:
         image_tensor = image_tensor.to(device)
 
+    fallback_inference_start_time = time.perf_counter()
     results = model(
         image_tensor,
         orig_target_sizes,
         return_masks=args.enable_masks,
         return_contours=args.enable_contours,
     )
+    fallback_inference_time = time.perf_counter() - fallback_inference_start_time
+    inference_time = float(getattr(model, 'last_inference_time', fallback_inference_time))
     result = results[0]
 
     boxes = build_result_boxes(
@@ -2909,7 +2922,7 @@ def run_model_inference(
                 body_source_indices,
             )
 
-    return result, boxes
+    return result, boxes, inference_time
 
 
 def apply_tracking_to_boxes(
@@ -3016,9 +3029,9 @@ def render_frame_from_input(
     tracker: Optional[SimpleSortTracker] = None,
     track_color_cache: Optional[Dict[int, np.ndarray]] = None,
     tracking_enabled_prev: bool = False,
-) -> Tuple[np.ndarray, Dict[str, torch.Tensor], List[Box], float, bool]:
+) -> Tuple[np.ndarray, Dict[str, torch.Tensor], List[Box], float, float, bool]:
     start_time = time.perf_counter()
-    result, boxes = run_model_inference(
+    result, boxes, inference_time = run_model_inference(
         image=image,
         model=model,
         transform=transform,
@@ -3027,7 +3040,7 @@ def render_frame_from_input(
         args=args,
         runtime_settings=runtime_settings,
     )
-    elapsed_time = time.perf_counter() - start_time
+    total_time = time.perf_counter() - start_time
 
     if tracker is not None and track_color_cache is not None:
         tracking_enabled_prev = apply_tracking_to_boxes(
@@ -3046,7 +3059,7 @@ def render_frame_from_input(
         runtime_settings=runtime_settings,
         track_color_cache=track_color_cache,
     )
-    return rendered, result, boxes, elapsed_time, tracking_enabled_prev
+    return rendered, result, boxes, inference_time, total_time, tracking_enabled_prev
 
 
 def save_stream_predictions(output_dir: Path, frame_index: int, records: List[Dict[str, object]]) -> None:
@@ -3136,7 +3149,7 @@ def process_images(args) -> None:
             image = cv2.imread(str(image_path), cv2.IMREAD_COLOR)
             if image is None:
                 raise FileNotFoundError(f'Failed to read image: {image_path}')
-            rendered, result, boxes, _, tracking_enabled_prev = render_frame_from_input(
+            rendered, result, boxes, _, _, tracking_enabled_prev = render_frame_from_input(
                 image=image,
                 model=model,
                 transform=transform,
@@ -3188,7 +3201,7 @@ def process_images(args) -> None:
             frame_index += 1
 
             image = frame
-            rendered, result, boxes, elapsed_time, tracking_enabled_prev = render_frame_from_input(
+            rendered, result, boxes, inference_time, total_time, tracking_enabled_prev = render_frame_from_input(
                 image=image,
                 model=model,
                 transform=transform,
@@ -3202,8 +3215,10 @@ def process_images(args) -> None:
             )
 
             debug_image = rendered.copy()
-            cv2.putText(debug_image, f'{elapsed_time * 1000:.2f} ms', (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2, cv2.LINE_AA)
-            cv2.putText(debug_image, f'{elapsed_time * 1000:.2f} ms', (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 255), 1, cv2.LINE_AA)
+            cv2.putText(debug_image, f'infer: {inference_time * 1000:.2f} ms', (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2, cv2.LINE_AA)
+            cv2.putText(debug_image, f'infer: {inference_time * 1000:.2f} ms', (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 255), 1, cv2.LINE_AA)
+            cv2.putText(debug_image, f'total: {total_time * 1000:.2f} ms', (10, 58), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2, cv2.LINE_AA)
+            cv2.putText(debug_image, f'total: {total_time * 1000:.2f} ms', (10, 58), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 255), 1, cv2.LINE_AA)
 
             if video_writer is None and not args.disable_video_writer:
                 fps = cap.get(cv2.CAP_PROP_FPS)
