@@ -198,14 +198,30 @@ def main(args, ):
     if args.simplify:
         import onnx
         import onnxsim
-        import onnxslim
-        if not args.skip_onnxslim:
+        use_onnxslim = not args.skip_onnxslim and args.dynamic_batch
+        if use_onnxslim:
+            import onnxslim
             onnx_model_slim = onnxslim.slim(export_path)
             onnx_model_simplify, check = onnxsim.simplify(onnx_model_slim)
         else:
+            if not args.dynamic_batch and not args.skip_onnxslim:
+                print('Skip onnxslim for static-batch export to avoid invalid Linear reshape fusion.')
             onnx_model_simplify, check = onnxsim.simplify(export_path)
         onnx.save(onnx_model_simplify, export_path)
         print(f'Simplify onnx model {check}...')
+
+    if args.check:
+        import onnx
+        onnx_model = onnx.load(export_path)
+        onnx.checker.check_model(onnx_model)
+        print('Check final onnx model done...')
+        try:
+            import onnxruntime as ort
+        except ImportError:
+            print('Skip ONNX Runtime load check because onnxruntime is not installed.')
+        else:
+            ort.InferenceSession(export_path, providers=['CPUExecutionProvider'])
+            print('Check ONNX Runtime load done...')
 
 
 if __name__ == '__main__':
