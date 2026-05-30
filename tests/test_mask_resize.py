@@ -5,6 +5,7 @@ from engine.data._misc import Mask
 from engine.data.transforms._transforms import Resize
 from engine.deim.postprocessor import PostProcessor
 from engine.misc.mask_resize import resize_masks
+from demo.wholebody49.demo_deimv2_torch_wholebody49_ins import resize_onnx_probability_masks
 
 
 def test_resize_masks_identity_preserves_bool_dtype():
@@ -86,3 +87,51 @@ def test_resize_masks_center_nearest_matches_previous_grid_sample_behavior():
     actual = resize_masks(masks, size=(7, 7), mode='nearest', origin='center')
 
     assert torch.equal(actual, expected)
+
+
+def test_resize_onnx_probability_masks_matches_logit_resize_then_sigmoid():
+    logits = torch.tensor(
+        [[[[-8.0, 8.0], [8.0, -8.0]]]],
+        dtype=torch.float32,
+    )
+    probability_masks = torch.sigmoid(logits)
+
+    resized = resize_onnx_probability_masks(
+        probability_masks,
+        size=(5, 5),
+        mode='bilinear',
+        origin='topleft',
+    )
+    expected = torch.sigmoid(
+        resize_masks(
+            logits,
+            size=(5, 5),
+            mode='bilinear',
+            origin='topleft',
+        )
+    )
+
+    assert torch.allclose(resized, expected, atol=1e-4)
+
+
+def test_resize_onnx_probability_masks_differs_from_probability_domain_resize():
+    logits = torch.tensor(
+        [[[[-8.0, 8.0], [8.0, -8.0]]]],
+        dtype=torch.float32,
+    )
+    probability_masks = torch.sigmoid(logits)
+
+    logit_domain_resized = resize_onnx_probability_masks(
+        probability_masks,
+        size=(5, 5),
+        mode='bilinear',
+        origin='topleft',
+    )
+    probability_domain_resized = resize_masks(
+        probability_masks,
+        size=(5, 5),
+        mode='bilinear',
+        origin='topleft',
+    )
+
+    assert not torch.allclose(logit_domain_resized, probability_domain_resized)
