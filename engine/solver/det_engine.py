@@ -50,17 +50,6 @@ def train_one_epoch(self_lr_scheduler, lr_scheduler, model: torch.nn.Module, cri
             'Training profiler enabled: '
             f'steps={profile_train_steps}, warmup={profile_train_warmup}, sync_cuda={profile_sync_cuda}'
         )
-        for name in [
-            'prof_h2d',
-            'prof_forward',
-            'prof_criterion',
-            'prof_backward_step',
-            'prof_ema',
-            'prof_scheduler',
-            'prof_reduce_log',
-            'prof_step_total',
-        ]:
-            metric_logger.add_meter(name, SmoothedValue(window_size=20, fmt='{avg:.4f}'))
 
     def _profile_now():
         if profile_sync_cuda:
@@ -169,17 +158,18 @@ def train_one_epoch(self_lr_scheduler, lr_scheduler, model: torch.nn.Module, cri
         profile_section_start = _profile_now() if profile_enabled else None
         loss_dict_reduced = dist_utils.reduce_dict(loss_dict)
         loss_value = sum(loss_dict_reduced.values())
+        loss_value_scalar = loss_value.item() if isinstance(loss_value, torch.Tensor) else loss_value
 
-        if not math.isfinite(loss_value):
-            print("Loss is {}, stopping training".format(loss_value))
+        if not math.isfinite(loss_value_scalar):
+            print("Loss is {}, stopping training".format(loss_value_scalar))
             print(loss_dict_reduced)
             sys.exit(1)
 
-        metric_logger.update(loss=loss_value, **loss_dict_reduced)
+        metric_logger.update(loss=loss_value_scalar, **loss_dict_reduced)
         metric_logger.update(lr=optimizer.param_groups[0]["lr"])
 
         if writer and dist_utils.is_main_process() and global_step % 10 == 0:
-            writer.add_scalar('Loss/total', loss_value.item(), global_step)
+            writer.add_scalar('Loss/total', loss_value_scalar, global_step)
             for j, pg in enumerate(optimizer.param_groups):
                 writer.add_scalar(f'Lr/pg_{j}', pg['lr'], global_step)
             for k, v in loss_dict_reduced.items():
