@@ -49,6 +49,12 @@ def load_checkpoint_compat(path: str, map_location='cpu'):
 
 
 class BaseSolver(object):
+    WHOLEBODY_PREFIX_CLASS_ROWS = 49
+    WHOLEBODY49_SCORE_ROWS = 50
+    WHOLEBODY69_SCORE_ROWS = 70
+    WHOLEBODY49_DENOISING_ROWS = 51
+    WHOLEBODY69_DENOISING_ROWS = 71
+
     def __init__(self, cfg: BaseConfig) -> None:
         self.cfg = cfg
         self._legacy_resume_warned = False
@@ -351,13 +357,21 @@ class BaseSolver(object):
 
         # Adjust head parameters between datasets
         try:
-            adjusted_state_dict = self._adjust_head_parameters(current_state_dict, pretrain_state_dict)
+            adjusted_state_dict, adjust_infos = self._adjust_head_parameters(current_state_dict, pretrain_state_dict)
             stat, infos = self._matched_state(current_state_dict, adjusted_state_dict)
         except Exception:
+            adjust_infos = []
             stat, infos = self._matched_state(current_state_dict, pretrain_state_dict)
 
         module.load_state_dict(stat, strict=False)
-        print(f'Load model.state_dict, {infos}')
+        if adjust_infos:
+            print(f'Tuning parameter adjustments: {adjust_infos}')
+        print(
+            'Load model.state_dict, '
+            f"matched={len(stat)}, missed={len(infos['missed'])}, unmatched={len(infos['unmatched'])}"
+        )
+        if infos['unmatched']:
+            print(f"Unmatched keys (first 10): {infos['unmatched'][:10]}")
 
     @staticmethod
     def _tensor_state_only(state: Dict[str, torch.Tensor]):
@@ -383,10 +397,19 @@ class BaseSolver(object):
 
     def _adjust_head_parameters(self, cur_state_dict, pretrain_state_dict):
         """Adjust head parameters between datasets."""
-        # List of parameters to adjust
-        if pretrain_state_dict['decoder.denoising_class_embed.weight'].size() != \
-                cur_state_dict['decoder.denoising_class_embed.weight'].size():
-            del pretrain_state_dict['decoder.denoising_class_embed.weight']
+        pretrain_state_dict = dict(pretrain_state_dict)
+        adjust_infos = []
+
+        denoising_key = 'decoder.denoising_class_embed.weight'
+        if denoising_key in cur_state_dict and denoising_key in pretrain_state_dict:
+            cur_tensor = cur_state_dict[denoising_key]
+            pretrain_tensor = pretrain_state_dict[denoising_key]
+            adjusted_tensor, info = self._map_wholebody49_to69_denoising_embed(cur_tensor, pretrain_tensor)
+            if adjusted_tensor is not None:
+                pretrain_state_dict[denoising_key] = adjusted_tensor
+                adjust_infos.append({denoising_key: info})
+            elif pretrain_tensor.size() != cur_tensor.size():
+                del pretrain_state_dict[denoising_key]
 
         head_param_names = [
             'decoder.enc_score_head.weight',
@@ -396,20 +419,83 @@ class BaseSolver(object):
             head_param_names.append(f'decoder.dec_score_head.{i}.weight')
             head_param_names.append(f'decoder.dec_score_head.{i}.bias')
 
-        adjusted_params = []
+        legacy_adjusted_params = []
 
         for param_name in head_param_names:
             if param_name in cur_state_dict and param_name in pretrain_state_dict:
                 cur_tensor = cur_state_dict[param_name]
                 pretrain_tensor = pretrain_state_dict[param_name]
+                adjusted_tensor, info = self._map_wholebody49_to69_score_head(cur_tensor, pretrain_tensor)
+                if adjusted_tensor is not None:
+                    pretrain_state_dict[param_name] = adjusted_tensor
+                    adjust_infos.append({param_name: info})
+                    continue
+
                 adjusted_tensor = self.map_class_weights(cur_tensor, pretrain_tensor)
                 if adjusted_tensor is not None:
                     pretrain_state_dict[param_name] = adjusted_tensor
-                    adjusted_params.append(param_name)
+                    legacy_adjusted_params.append(param_name)
                 else:
                     print(f"Cannot adjust parameter '{param_name}' due to size mismatch.")
 
-        return pretrain_state_dict
+        if legacy_adjusted_params:
+            adjust_infos.append({'legacy_class_mapping': legacy_adjusted_params})
+
+        return pretrain_state_dict, adjust_infos
+
+    @classmethod
+    def _is_wholebody49_to69_score_shape(cls, cur_tensor: torch.Tensor, pretrain_tensor: torch.Tensor) -> bool:
+        return (
+            cur_tensor.dim() == pretrain_tensor.dim()
+            and cur_tensor.dim() in (1, 2)
+            and pretrain_tensor.shape[0] == cls.WHOLEBODY49_SCORE_ROWS
+            and cur_tensor.shape[0] == cls.WHOLEBODY69_SCORE_ROWS
+            and cur_tensor.shape[1:] == pretrain_tensor.shape[1:]
+        )
+
+    @classmethod
+    def _map_wholebody49_to69_score_head(cls, cur_tensor: torch.Tensor, pretrain_tensor: torch.Tensor):
+        if not cls._is_wholebody49_to69_score_shape(cur_tensor, pretrain_tensor):
+            return None, None
+
+        adjusted_tensor = cur_tensor.clone()
+        copied_rows = cls.WHOLEBODY_PREFIX_CLASS_ROWS
+        adjusted_tensor[:copied_rows] = pretrain_tensor[:copied_rows]
+        adjusted_tensor.requires_grad = False
+        return adjusted_tensor, {
+            'type': 'wholebody49_to69_score_head',
+            'copied_semantic_rows': copied_rows,
+            'kept_initialized_rows': cur_tensor.shape[0] - copied_rows,
+        }
+
+    @classmethod
+    def _is_wholebody49_to69_denoising_shape(cls, cur_tensor: torch.Tensor, pretrain_tensor: torch.Tensor) -> bool:
+        return (
+            cur_tensor.dim() == pretrain_tensor.dim()
+            and cur_tensor.dim() == 2
+            and pretrain_tensor.shape[0] == cls.WHOLEBODY49_DENOISING_ROWS
+            and cur_tensor.shape[0] == cls.WHOLEBODY69_DENOISING_ROWS
+            and cur_tensor.shape[1:] == pretrain_tensor.shape[1:]
+        )
+
+    @classmethod
+    def _map_wholebody49_to69_denoising_embed(cls, cur_tensor: torch.Tensor, pretrain_tensor: torch.Tensor):
+        if not cls._is_wholebody49_to69_denoising_shape(cur_tensor, pretrain_tensor):
+            return None, None
+
+        adjusted_tensor = cur_tensor.clone()
+        copied_rows = cls.WHOLEBODY_PREFIX_CLASS_ROWS
+        source_padding_row = cls.WHOLEBODY49_DENOISING_ROWS - 1
+        target_padding_row = cls.WHOLEBODY69_DENOISING_ROWS - 1
+        adjusted_tensor[:copied_rows] = pretrain_tensor[:copied_rows]
+        adjusted_tensor[target_padding_row] = pretrain_tensor[source_padding_row]
+        adjusted_tensor.requires_grad = False
+        return adjusted_tensor, {
+            'type': 'wholebody49_to69_denoising_embed',
+            'copied_semantic_rows': copied_rows,
+            'kept_initialized_rows': target_padding_row - copied_rows,
+            'copied_padding_row': (source_padding_row, target_padding_row),
+        }
 
     def map_class_weights(self, cur_tensor, pretrain_tensor):
         """Map class weights from pretrain model to current model based on class IDs."""
