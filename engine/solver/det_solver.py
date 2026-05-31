@@ -112,8 +112,14 @@ class DetSolver(BaseSolver):
                 use_amp=args.use_amp,
                 amp_dtype=args.get_amp_dtype(),
                 lr_warmup_scheduler=self.lr_warmup_scheduler,
-                writer=self.writer
+                writer=self.writer,
+                profile_train_steps=args.profile_train_steps,
+                profile_train_warmup=args.profile_train_warmup,
             )
+
+            if args.profile_train_steps is not None and int(args.profile_train_steps) > 0:
+                print('Training profiler run finished; skipping scheduler epoch step, evaluation, and checkpoint saves.')
+                return
 
             if not self.self_lr_scheduler:  # update by epoch
                 if self.lr_warmup_scheduler is None or self.lr_warmup_scheduler.finished():
