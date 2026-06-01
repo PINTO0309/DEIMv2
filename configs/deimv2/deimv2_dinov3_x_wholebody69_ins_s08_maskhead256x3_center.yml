@@ -7,7 +7,7 @@ __include__: [
 ]
 
 
-output_dir: ./outputs/deimv2_dinov3_x_wholebody68_ins_s08_maskhead256x3_center
+output_dir: ./outputs/deimv2_dinov3_x_wholebody69_ins_s08_maskhead256x3_center
 mask_target_class_ids: [0]
 center_eval_class_ids: [21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60, 61, 62, 63, 64, 65, 66, 67, 68]
 center_eval_thresholds: [0.25, 0.5, 1.0]
