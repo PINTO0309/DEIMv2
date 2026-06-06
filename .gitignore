@@ -145,6 +145,7 @@ dmypy.json
 
 tools/dataset/wholebody*/
 tools/dataset/wholebody*
+tools/dataset/no_hand_keypoints*
 *.engine
 *.profile
 outputs*.tar.gz
