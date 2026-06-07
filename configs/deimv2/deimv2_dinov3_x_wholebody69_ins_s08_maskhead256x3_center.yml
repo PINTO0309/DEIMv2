@@ -135,10 +135,10 @@ train_dataloader:
   collate_fn:
     mixup_prob: 0.0
     mixup_epochs: [4, 29]
-    stop_epoch: 50
     copyblend_prob: 0.0
     copyblend_epochs: [4, 50]
-    base_size_repeat: 3
+    base_size_repeat: 3 # multiscales: [480, 512, 544, 576, 608, 640, 640, 640, 672, 704, 736, 768]
+    stop_epoch: 50 # epoch in [50, ~) stop `multiscales`
 
 val_dataloader:
   dataset:
