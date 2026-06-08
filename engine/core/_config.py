@@ -77,6 +77,7 @@ class BaseConfig(object):
         self.checkpoint_freq :int = 1
         self.profile_train_steps :int = None
         self.profile_train_warmup :int = 3
+        self.stage2_checkpoint_source :str = 'best'
         self.output_dir :str = None
         self.summary_dir :str = None
         self.device : str = ''

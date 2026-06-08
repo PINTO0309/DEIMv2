@@ -1,16 +1,21 @@
 import random
+import tempfile
 import unittest
+from pathlib import Path
+from types import SimpleNamespace
 
 import numpy as np
 import torch
 from PIL import Image
 
+from engine.core import YAMLConfig
 from engine.data.dataloader import BatchImageCollateFunction
 from engine.data.transforms.container import Compose
 from engine.data.transforms.mosaic import Mosaic
 from engine.misc import dist_utils
 from engine.optim.ema import ModelEMA
 from engine.optim.lr_scheduler import FlatCosineLRScheduler
+from engine.solver.det_solver import DetSolver
 
 
 class ResumeStateTests(unittest.TestCase):
@@ -135,6 +140,66 @@ class ResumeStateTests(unittest.TestCase):
         self.assertTrue(torch.equal(torch.rand(2), expected[2]))
         if torch.cuda.is_available():
             self.assertTrue(torch.equal(torch.rand(2, device='cuda'), expected_cuda))
+
+    def test_stage2_checkpoint_source_config_defaults_and_override(self):
+        repo_root = Path(__file__).resolve().parents[1]
+
+        default_cfg = YAMLConfig(str(repo_root / 'configs/base/deimv2.yml'))
+        self.assertEqual(default_cfg.stage2_checkpoint_source, 'best')
+
+        wholebody69_cfg = YAMLConfig(
+            str(repo_root / 'configs/deimv2/deimv2_dinov3_x_wholebody69_ins_s08_maskhead256x3_center.yml')
+        )
+        self.assertEqual(wholebody69_cfg.stage2_checkpoint_source, 'last')
+
+    def test_stage2_checkpoint_source_validation_and_paths(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            output_dir = Path(tmp)
+            solver = DetSolver.__new__(DetSolver)
+            solver.output_dir = output_dir
+
+            solver.cfg = SimpleNamespace(stage2_checkpoint_source='best')
+            self.assertEqual(solver._get_stage2_checkpoint_path(), output_dir / 'best_stg1.pth')
+
+            solver.cfg = SimpleNamespace(stage2_checkpoint_source='last')
+            with self.assertRaises(FileNotFoundError):
+                solver._get_stage2_checkpoint_path()
+
+            fallback = output_dir / 'last.pth'
+            fallback.touch()
+            self.assertEqual(solver._get_stage2_checkpoint_path(), fallback)
+
+            last_stg1 = output_dir / 'last_stg1.pth'
+            last_stg1.touch()
+            self.assertEqual(solver._get_stage2_checkpoint_path(), last_stg1)
+
+            solver.cfg = SimpleNamespace(stage2_checkpoint_source='invalid')
+            with self.assertRaises(ValueError):
+                solver._get_stage2_checkpoint_source()
+
+    def test_last_stage2_reload_preserves_current_epoch_when_requested(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            output_dir = Path(tmp)
+            (output_dir / 'last_stg1.pth').touch()
+
+            solver = DetSolver.__new__(DetSolver)
+            solver.cfg = SimpleNamespace(stage2_checkpoint_source='last')
+            solver.output_dir = output_dir
+            solver.last_epoch = 49
+
+            loaded_paths = []
+            set_epochs = []
+            solver.load_resume_state = lambda path: loaded_paths.append(Path(path).name)
+            solver.train_dataloader = SimpleNamespace(
+                set_epoch=lambda epoch: set_epochs.append(epoch),
+                sampler=SimpleNamespace(set_epoch=lambda epoch: None),
+            )
+
+            solver._load_stage2_checkpoint(50, preserve_last_epoch=True)
+
+            self.assertEqual(loaded_paths, ['last_stg1.pth'])
+            self.assertEqual(set_epochs, [50])
+            self.assertEqual(solver.last_epoch, 50)
 
 
 if __name__ == '__main__':

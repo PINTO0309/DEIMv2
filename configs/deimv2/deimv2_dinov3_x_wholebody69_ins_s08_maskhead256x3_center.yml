@@ -53,6 +53,7 @@ PostProcessor:
   k_max: 0
 
 epoches: 58
+stage2_checkpoint_source: last # best or last
 
 ### 1 GPU x 1 batch
 optimizer:

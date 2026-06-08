@@ -29,6 +29,72 @@ class DetSolver(BaseSolver):
             return 'coco_eval_masks'
         return next(iter(test_stats), None) if test_stats else None
 
+    def _get_stage2_checkpoint_source(self) -> str:
+        source = str(getattr(self.cfg, 'stage2_checkpoint_source', 'best') or 'best').lower()
+        if source not in ('best', 'last'):
+            raise ValueError(
+                "stage2_checkpoint_source must be either 'best' or 'last', "
+                f"got {source!r}"
+            )
+        return source
+
+    def _stage2_best_checkpoint_path(self):
+        return self.output_dir / 'best_stg1.pth'
+
+    def _stage2_last_checkpoint_path(self):
+        return self.output_dir / 'last_stg1.pth'
+
+    def _get_stage2_checkpoint_path(self):
+        source = self._get_stage2_checkpoint_source()
+        if source == 'best':
+            return self._stage2_best_checkpoint_path()
+
+        if not self.output_dir:
+            raise RuntimeError("stage2_checkpoint_source='last' requires output_dir to save last_stg1.pth")
+
+        last_stg1 = self._stage2_last_checkpoint_path()
+        if last_stg1.exists():
+            return last_stg1
+
+        fallback = self.output_dir / 'last.pth'
+        if fallback.exists():
+            return fallback
+
+        raise FileNotFoundError(
+            "stage2_checkpoint_source='last' requires last_stg1.pth or last.pth "
+            f"under {self.output_dir}"
+        )
+
+    def _set_train_epoch(self, epoch: int):
+        self.train_dataloader.set_epoch(epoch)
+        if dist_utils.is_dist_available_and_initialized():
+            self.train_dataloader.sampler.set_epoch(epoch)
+
+    def _sync_after_checkpoint_save(self):
+        if dist_utils.is_dist_available_and_initialized():
+            torch.distributed.barrier()
+
+    def _save_stage1_last_checkpoint(self, epoch: int):
+        if self._get_stage2_checkpoint_source() != 'last':
+            return
+        if not self.output_dir:
+            raise RuntimeError("stage2_checkpoint_source='last' requires output_dir to save last_stg1.pth")
+        if epoch + 1 != self.train_dataloader.collate_fn.stop_epoch:
+            return
+
+        dist_utils.save_on_master(self.state_dict(), self._stage2_last_checkpoint_path())
+        self._sync_after_checkpoint_save()
+
+    def _load_stage2_checkpoint(self, epoch: int, preserve_last_epoch: bool = False):
+        source = self._get_stage2_checkpoint_source()
+        checkpoint_path = self._get_stage2_checkpoint_path()
+        self.load_resume_state(str(checkpoint_path))
+
+        if source == 'last':
+            self._set_train_epoch(epoch)
+            if preserve_last_epoch:
+                self.last_epoch = epoch
+
     def fit(self, ):
         self.train()
         args = self.cfg
@@ -86,13 +152,10 @@ class DetSolver(BaseSolver):
         start_epoch = self.last_epoch + 1
         for epoch in range(start_epoch, args.epoches):
 
-            self.train_dataloader.set_epoch(epoch)
-            # self.train_dataloader.dataset.set_epoch(epoch)
-            if dist_utils.is_dist_available_and_initialized():
-                self.train_dataloader.sampler.set_epoch(epoch)
+            self._set_train_epoch(epoch)
 
             if epoch == self.train_dataloader.collate_fn.stop_epoch:
-                self.load_resume_state(str(self.output_dir / 'best_stg1.pth'))
+                self._load_stage2_checkpoint(epoch)
                 self.ema.decay = self.train_dataloader.collate_fn.ema_restart_decay
                 print(f'Refresh EMA at epoch {epoch} with decay {self.ema.decay}')
 
@@ -129,6 +192,7 @@ class DetSolver(BaseSolver):
 
             if self.output_dir and epoch < self.train_dataloader.collate_fn.stop_epoch:
                 dist_utils.save_on_master(self.state_dict(), self.output_dir / 'last.pth')
+                self._save_stage1_last_checkpoint(epoch)
 
             module = self.ema.module if self.ema else self.model
             test_stats, coco_evaluator = evaluate(
@@ -178,7 +242,7 @@ class DetSolver(BaseSolver):
             if primary_metric_key is not None and (not improved) and epoch >= self.train_dataloader.collate_fn.stop_epoch:
                 best_stat = {'epoch': -1, primary_metric_key: top1}
                 self.ema.decay -= 0.0001
-                self.load_resume_state(str(self.output_dir / 'best_stg1.pth'))
+                self._load_stage2_checkpoint(epoch, preserve_last_epoch=True)
                 print(f'Refresh EMA at epoch {epoch} with decay {self.ema.decay}')
 
             if self.output_dir:
